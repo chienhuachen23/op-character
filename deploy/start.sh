@@ -8,7 +8,7 @@ export DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/db.sqlite3}"
 export RAILWAY_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-true}"
 export DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-*}"
 export FRONTEND_DIST="${FRONTEND_DIST:-/app/static/frontend}"
-export PORT="${PORT:-8000}"
+export PORT="${PORT:-8080}"
 
 mkdir -p "$DATA_DIR/media"
 
