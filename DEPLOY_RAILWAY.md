@@ -1,15 +1,16 @@
 # Railway 部署指南
 
-单服务部署：Nginx 提供前端静态页，Daphne 处理 API + WebSocket。一个域名即可跨设备访问。
+单服务部署：Daphne 直接监听 `$PORT`，提供前端 + API + WebSocket。一个域名即可跨设备访问。
 
 ## 架构
 
 ```text
 https://你的项目.up.railway.app
-  ├── /          → React 前端
-  ├── /api/v1/   → Django REST API
-  ├── /ws/       → WebSocket（房间实时同步）
-  └── /media/    → 管理员上传的图片
+  ├── /health      → 健康检查
+  ├── /            → React 前端
+  ├── /api/v1/     → Django REST API
+  ├── /ws/         → WebSocket（房间实时同步）
+  └── /media/      → 管理员上传的图片
 ```
 
 数据持久化：`/app/data` 卷（SQLite + 上传图片）。
@@ -72,7 +73,16 @@ railway up
 | `USE_INMEMORY_CHANNEL` | `true` | 单实例 WebSocket |
 | `DATA_DIR` | `/app/data` | 默认值，可不改 |
 
-`PORT`、`RAILWAY_PUBLIC_DOMAIN` 由 Railway 自动注入，不用手填。
+`PORT`、`RAILWAY_PUBLIC_DOMAIN` 由 Railway 自动注入，**不要手动设置 `PORT`**。
+
+### 4.1 配置公网端口（502 时必查）
+
+1. 服务 → **Settings** → **Networking**
+2. 确认已 **Generate Domain**
+3. 点击你的域名，检查 **Target Port**：
+   - 留空（自动）或设为 **8080**
+   - 不要设成 3000 等其它值
+4. **Variables** 里如果手动加过 `PORT`，请**删除**后 Redeploy
 
 ### 5. 挂载持久化卷（重要）
 
@@ -142,7 +152,9 @@ docker run --rm -p 8080:8080 \
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| 502 / 部署失败 | 构建或启动报错 | 看 Railway **Deployments → Logs** |
+| 502 / Application failed to respond | Target Port 与监听端口不一致 | Networking → Target Port = 8080；删除手动 `PORT` 变量 |
+| 502 / x-railway-fallback: true | 部署未 Active 或端口未监听 | 看 Deployments 是否 Success；访问 `/health` |
+| 502 / 部署显示 Completed | 主进程退出 | 已改为 `exec daphne` 保持运行 |
 | API 返回 HTML | 服务未就绪或路径错误 | 确认 `/api/v1/game-modes` 可访问 |
 | WebSocket 断开 | 代理未升级 | 已配置 nginx WS 代理；单实例需 `USE_INMEMORY_CHANNEL=true` |
 | 重启后数据没了 | 未挂 Volume | 按上文第 5 步挂载 `/app/data` |

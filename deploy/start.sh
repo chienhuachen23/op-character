@@ -8,11 +8,18 @@ export DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/db.sqlite3}"
 export RAILWAY_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-true}"
 export DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-*}"
 export FRONTEND_DIST="${FRONTEND_DIST:-/app/static/frontend}"
-export PORT="${PORT:-8080}"
+
+if [ -z "${PORT}" ]; then
+  echo "ERROR: PORT is not set. Remove any manual PORT override in Railway Variables,"
+  echo "or set PORT to match Networking -> Target Port (usually 8080)."
+  exit 1
+fi
 
 mkdir -p "$DATA_DIR/media"
 
-echo "Starting (PORT=${PORT}, FRONTEND_DIST=${FRONTEND_DIST})"
+echo "PORT=${PORT}"
+echo "FRONTEND_DIST=${FRONTEND_DIST}"
+echo "DATABASE_PATH=${DATABASE_PATH}"
 
 if [ -f "${FRONTEND_DIST}/index.html" ]; then
   echo "Frontend bundle: ok"
@@ -21,17 +28,4 @@ else
 fi
 
 echo "Starting Daphne on 0.0.0.0:${PORT}..."
-daphne -b 0.0.0.0 -p "${PORT}" config.asgi:application &
-DAPHNE_PID=$!
-
-# Give Daphne a moment to bind PORT before Railway probes it.
-sleep 1
-
-echo "Running migrations..."
-python manage.py migrate --noinput
-
-echo "Seeding catalog data..."
-python manage.py seed_one_piece
-
-echo "Startup complete. /health should return ok."
-wait "${DAPHNE_PID}"
+exec daphne -b 0.0.0.0 -p "${PORT}" config.asgi:application

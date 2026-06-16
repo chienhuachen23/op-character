@@ -34,4 +34,6 @@ ENV DATA_DIR=/app/data \
     DJANGO_ALLOWED_HOSTS=* \
     FRONTEND_DIST=/app/static/frontend
 
+EXPOSE 8080
+
 CMD ["/start.sh"]

@@ -3,9 +3,8 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
+preDeployCommand = "python manage.py migrate --noinput && python manage.py seed_one_piece"
+startCommand = "/start.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
-
-# Railway requires the app to listen on $PORT quickly. start.sh starts Daphne
-# before running migrations so /health can respond during startup.
