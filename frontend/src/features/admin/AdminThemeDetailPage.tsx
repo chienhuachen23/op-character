@@ -10,6 +10,11 @@ import {
 import { resolveMediaUrl } from '../../api/client';
 import { Card, Button, Input } from '../../components/ui';
 import { characterName } from '../../i18n';
+import {
+  exportCharacterTemplateCsv,
+  exportCharactersCsv,
+  parseCharacterCsv,
+} from './characterCsv';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
 
@@ -22,6 +27,26 @@ function isImageFile(file: File): boolean {
 function acceptsFileDrop(e: DragEvent): boolean {
   const types = e.dataTransfer.types;
   return types.includes('Files') || types.some((type) => type.startsWith('image/'));
+}
+
+function PendingImagePreview({ file, alt }: { file: File; alt: string }) {
+  const [src, setSrc] = useState('');
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setSrc(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  if (!src) return null;
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-20 h-20 rounded-full object-cover border-2 border-straw/40 bg-ocean"
+    />
+  );
 }
 
 function CharacterImage({ imageUrl, name }: { imageUrl: string; name: string }) {
@@ -54,6 +79,7 @@ export function AdminThemeDetailPage() {
   const { themeId } = useParams<{ themeId: string }>();
   const { t, i18n } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadCharacterId = useRef<number | null>(null);
   const [theme, setTheme] = useState<AdminTheme | null>(null);
   const [characters, setCharacters] = useState<AdminCharacter[]>([]);
@@ -61,11 +87,13 @@ export function AdminThemeDetailPage() {
   const [loading, setLoading] = useState(false);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
   const [dragOverCharacterId, setDragOverCharacterId] = useState<number | null>(null);
+  const [dragOverCreateForm, setDragOverCreateForm] = useState(false);
+  const [pendingCreateImage, setPendingCreateImage] = useState<File | null>(null);
+  const [importMessage, setImportMessage] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name_zh: '',
     name_en: '',
-    image_url: '',
     is_active: true,
   });
 
@@ -102,7 +130,9 @@ export function AdminThemeDetailPage() {
 
   const resetForm = () => {
     setEditingId(null);
-    setForm({ name_zh: '', name_en: '', image_url: '', is_active: true });
+    setForm({ name_zh: '', name_en: '', is_active: true });
+    setPendingCreateImage(null);
+    setDragOverCreateForm(false);
   };
 
   const startCreate = () => {
@@ -112,10 +142,11 @@ export function AdminThemeDetailPage() {
 
   const startEdit = (character: AdminCharacter) => {
     setEditingId(character.id);
+    setPendingCreateImage(null);
+    setDragOverCreateForm(false);
     setForm({
       name_zh: character.name_zh,
       name_en: character.name_en,
-      image_url: character.image_url,
       is_active: character.is_active,
     });
   };
@@ -126,17 +157,18 @@ export function AdminThemeDetailPage() {
     setError('');
     try {
       if (editingId === 0) {
-        await adminApi.createCharacter(id, {
+        const created = await adminApi.createCharacter(id, {
           name_zh: form.name_zh.trim(),
           name_en: form.name_en.trim(),
-          image_url: form.image_url.trim(),
           is_active: form.is_active,
         });
+        if (pendingCreateImage) {
+          await uploadImageForCharacter(pendingCreateImage, created.id);
+        }
       } else if (editingId) {
         await adminApi.updateCharacter(editingId, {
           name_zh: form.name_zh.trim(),
           name_en: form.name_en.trim(),
-          image_url: form.image_url.trim(),
           is_active: form.is_active,
         });
       }
@@ -163,27 +195,98 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const handleUpload = async (file: File, characterId: number) => {
+  const uploadImageForCharacter = async (file: File, characterId: number) => {
     if (!theme) return;
     if (!isImageFile(file)) {
       setError(t('adminInvalidImageFile'));
       return;
     }
-    setLoading(true);
     setUploadTargetId(characterId);
-    setError('');
     try {
       const { url } = await adminApi.uploadImage(file, theme.slug);
       await adminApi.updateCharacter(characterId, { image_url: url });
-      if (editingId === characterId) {
-        setForm((prev) => ({ ...prev, image_url: url }));
-      }
+    } finally {
+      setUploadTargetId(null);
+    }
+  };
+
+  const handleUpload = async (file: File, characterId: number) => {
+    if (!theme) return;
+    setLoading(true);
+    setError('');
+    try {
+      await uploadImageForCharacter(file, characterId);
       await loadData();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
-      setUploadTargetId(null);
+    }
+  };
+
+  const handleCreateFormDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!acceptsFileDrop(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDragOverCreateForm(true);
+  };
+
+  const handleCreateFormDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    const related = e.relatedTarget as Node | null;
+    if (!e.currentTarget.contains(related)) {
+      setDragOverCreateForm(false);
+    }
+  };
+
+  const handleCreateFormDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOverCreateForm(false);
+    const file = Array.from(e.dataTransfer.files).find(isImageFile);
+    if (!file) {
+      setError(t('adminInvalidImageFile'));
+      return;
+    }
+    setPendingCreateImage(file);
+    setError('');
+  };
+
+  const handleExport = () => {
+    if (!theme) return;
+    if (!characters.length) {
+      setError(t('adminExportEmpty'));
+      return;
+    }
+    exportCharactersCsv(characters, theme.slug);
+    setImportMessage('');
+  };
+
+  const handleDownloadTemplate = () => {
+    if (!theme) return;
+    exportCharacterTemplateCsv(theme.slug);
+  };
+
+  const handleImportFile = async (file: File) => {
+    setLoading(true);
+    setError('');
+    setImportMessage('');
+    try {
+      const text = await file.text();
+      const rows = parseCharacterCsv(text);
+      if (!rows.length) {
+        setError(t('adminImportEmpty'));
+        return;
+      }
+      const result = await adminApi.importCharacters(id, rows);
+      const messages = [t('adminImportResult', { count: result.created })];
+      if (result.skipped > 0) {
+        messages.push(t('adminImportSkipped', { count: result.skipped }));
+      }
+      setImportMessage(messages.join(' · '));
+      await loadData();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -236,13 +339,67 @@ export function AdminThemeDetailPage() {
 
       <div className="flex flex-wrap gap-2 mb-6">
         <Button onClick={startCreate}>{t('adminNewCharacter')}</Button>
+        <Button variant="secondary" onClick={handleExport} disabled={loading || !characters.length}>
+          {t('adminExportCharacters')}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => importInputRef.current?.click()}
+          disabled={loading}
+        >
+          {t('adminImportCharacters')}
+        </Button>
+        <Button variant="ghost" onClick={handleDownloadTemplate} disabled={!theme}>
+          {t('adminDownloadTemplate')}
+        </Button>
       </div>
 
       {editingId !== null && (
-        <Card className="mb-6">
+        <div
+          onDragEnter={editingId === 0 ? handleCreateFormDragOver : undefined}
+          onDragOver={editingId === 0 ? handleCreateFormDragOver : undefined}
+          onDragLeave={editingId === 0 ? handleCreateFormDragLeave : undefined}
+          onDrop={editingId === 0 ? handleCreateFormDrop : undefined}
+        >
+          <Card
+            className={clsx(
+              'mb-6 relative',
+              editingId === 0 && dragOverCreateForm && 'ring-2 ring-straw shadow-straw/30 shadow-lg'
+            )}
+          >
+          {editingId === 0 && dragOverCreateForm && (
+            <div className="absolute inset-0 z-10 rounded-2xl border-2 border-dashed border-straw bg-straw/15 flex items-center justify-center pointer-events-none">
+              <p className="text-sm font-semibold text-straw px-4 text-center">
+                {t('adminDropImageHint')}
+              </p>
+            </div>
+          )}
           <h3 className="font-bold mb-4">
             {editingId === 0 ? t('adminNewCharacter') : t('adminEditCharacter')}
           </h3>
+          {editingId === 0 && (
+            <div className="flex flex-col items-center mb-4">
+              {pendingCreateImage ? (
+                <PendingImagePreview
+                  file={pendingCreateImage}
+                  alt={form.name_zh || form.name_en || 'preview'}
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-full flex items-center justify-center text-sm text-parchment/70 border-2 border-dashed border-straw/40 bg-ocean/40 px-2 text-center">
+                  {t('adminCreateDropImageHint')}
+                </div>
+              )}
+              {pendingCreateImage && (
+                <button
+                  type="button"
+                  className="text-xs text-parchment/60 mt-2 hover:text-parchment"
+                  onClick={() => setPendingCreateImage(null)}
+                >
+                  {t('cancel')}
+                </button>
+              )}
+            </div>
+          )}
           <div className="grid md:grid-cols-2 gap-3 mb-3">
             <Input
               value={form.name_zh}
@@ -255,12 +412,7 @@ export function AdminThemeDetailPage() {
               placeholder={t('adminCharacterNameEn')}
             />
           </div>
-          <Input
-            className="mb-3"
-            value={form.image_url}
-            onChange={(e) => setForm((prev) => ({ ...prev, image_url: e.target.value }))}
-            placeholder={t('adminImageUrl')}
-          />
+          <p className="text-sm text-parchment/50 mb-4">{t('adminImageOnCardHint')}</p>
           <label className="flex items-center gap-2 text-sm mb-4">
             <input
               type="checkbox"
@@ -277,10 +429,12 @@ export function AdminThemeDetailPage() {
               {t('cancel')}
             </Button>
           </div>
-        </Card>
+          </Card>
+        </div>
       )}
 
       {error && <p className="text-red-400 mb-4">{error}</p>}
+      {importMessage && <p className="text-green-300 mb-4">{importMessage}</p>}
 
       <input
         ref={fileInputRef}
@@ -294,6 +448,20 @@ export function AdminThemeDetailPage() {
           pendingUploadCharacterId.current = null;
           if (file && targetId) {
             void handleUpload(file, targetId);
+          }
+        }}
+      />
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) {
+            void handleImportFile(file);
           }
         }}
       />

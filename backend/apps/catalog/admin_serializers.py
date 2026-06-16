@@ -44,9 +44,25 @@ class AdminCharacterSerializer(serializers.ModelSerializer):
 
 
 class AdminCharacterWriteSerializer(serializers.ModelSerializer):
+    image_url = serializers.CharField(required=False, allow_blank=True, default="")
+
     class Meta:
         model = Character
         fields = ["name_zh", "name_en", "image_url", "is_active"]
 
     def validate_image_url(self, value):
         return (value or "").strip()
+
+
+class AdminCharacterImportRowSerializer(serializers.Serializer):
+    name_zh = serializers.CharField(max_length=100)
+    name_en = serializers.CharField(max_length=100)
+
+
+class AdminCharacterBulkImportSerializer(serializers.Serializer):
+    characters = AdminCharacterImportRowSerializer(many=True)
+
+    def validate_characters(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one character row is required.")
+        return value

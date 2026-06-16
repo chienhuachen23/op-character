@@ -33,7 +33,7 @@ class Character(models.Model):
     theme = models.ForeignKey(Theme, on_delete=models.CASCADE, related_name="characters")
     name_zh = models.CharField(max_length=100)
     name_en = models.CharField(max_length=100)
-    image_url = models.CharField(max_length=500)
+    image_url = models.CharField(max_length=500, blank=True, default="")
     is_active = models.BooleanField(default=True)
 
     class Meta:

@@ -2,6 +2,7 @@ from django.urls import path
 
 from .admin_views import (
     AdminAuthVerifyView,
+    AdminCharacterBulkImportView,
     AdminCharacterDetailView,
     AdminCharacterListCreateView,
     AdminImageUploadView,
@@ -20,6 +21,11 @@ urlpatterns = [
         "admin/themes/<int:theme_id>/characters",
         AdminCharacterListCreateView.as_view(),
         name="admin-character-list",
+    ),
+    path(
+        "admin/themes/<int:theme_id>/characters/import",
+        AdminCharacterBulkImportView.as_view(),
+        name="admin-character-import",
     ),
     path(
         "admin/characters/<int:character_id>",

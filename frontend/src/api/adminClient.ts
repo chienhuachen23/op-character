@@ -118,6 +118,20 @@ export const adminApi = {
   deleteCharacter: (characterId: number) =>
     adminFetch<void>(`/admin/characters/${characterId}`, { method: 'DELETE' }),
 
+  importCharacters: (
+    themeId: number,
+    characters: { name_zh: string; name_en: string }[]
+  ) =>
+    adminFetch<{
+      created: number;
+      skipped: number;
+      characters: AdminCharacter[];
+      errors: { row: number; message: string }[];
+    }>(`/admin/themes/${themeId}/characters/import`, {
+      method: 'POST',
+      body: JSON.stringify({ characters }),
+    }),
+
   uploadImage: (file: File, themeSlug: string) => {
     const form = new FormData();
     form.append('file', file);

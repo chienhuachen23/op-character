@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from apps.core.exceptions import GameAPIException
 
 from .admin_serializers import (
+    AdminCharacterBulkImportSerializer,
     AdminCharacterSerializer,
     AdminCharacterWriteSerializer,
     AdminThemeSerializer,
@@ -78,6 +79,53 @@ class AdminCharacterListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         character = Character.objects.create(theme=theme, **serializer.validated_data)
         return Response(AdminCharacterSerializer(character).data, status=201)
+
+
+class AdminCharacterBulkImportView(APIView):
+    permission_classes = [AdminAPIKeyPermission]
+
+    def get_theme(self, theme_id):
+        theme = Theme.objects.filter(id=theme_id).first()
+        if not theme:
+            raise GameAPIException("NOT_FOUND", "Theme not found", 404)
+        return theme
+
+    def post(self, request, theme_id):
+        theme = self.get_theme(theme_id)
+        serializer = AdminCharacterBulkImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        created = []
+        skipped = []
+        for index, row in enumerate(serializer.validated_data["characters"], start=1):
+            name_zh = row["name_zh"].strip()
+            name_en = row["name_en"].strip()
+            if not name_zh or not name_en:
+                skipped.append(
+                    {
+                        "row": index,
+                        "message": "Both Chinese and English names are required.",
+                    }
+                )
+                continue
+            character = Character.objects.create(
+                theme=theme,
+                name_zh=name_zh,
+                name_en=name_en,
+                image_url="",
+                is_active=True,
+            )
+            created.append(AdminCharacterSerializer(character).data)
+
+        return Response(
+            {
+                "created": len(created),
+                "skipped": len(skipped),
+                "characters": created,
+                "errors": skipped,
+            },
+            status=201,
+        )
 
 
 class AdminCharacterDetailView(APIView):
