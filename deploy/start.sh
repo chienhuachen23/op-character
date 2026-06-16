@@ -31,6 +31,9 @@ import time
 import urllib.error
 import urllib.request
 
+# Daphne needs a moment to bind the socket after fork.
+time.sleep(1)
+
 url = "http://127.0.0.1:8001/api/v1/game-modes"
 for i in range(90):
     try:
