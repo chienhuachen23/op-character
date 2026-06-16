@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
 import {
   adminApi,
   type AdminCharacter,
@@ -9,6 +10,19 @@ import {
 import { resolveMediaUrl } from '../../api/client';
 import { Card, Button, Input } from '../../components/ui';
 import { characterName } from '../../i18n';
+
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
+
+function isImageFile(file: File): boolean {
+  if (file.type.startsWith('image/')) return true;
+  const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase() : '';
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+function acceptsFileDrop(e: DragEvent): boolean {
+  const types = e.dataTransfer.types;
+  return types.includes('Files') || types.some((type) => type.startsWith('image/'));
+}
 
 function CharacterImage({ imageUrl, name }: { imageUrl: string; name: string }) {
   const [failed, setFailed] = useState(false);
@@ -46,6 +60,7 @@ export function AdminThemeDetailPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
+  const [dragOverCharacterId, setDragOverCharacterId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name_zh: '',
@@ -74,6 +89,16 @@ export function AdminThemeDetailPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const preventDefault = (e: globalThis.DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', preventDefault);
+    window.addEventListener('drop', preventDefault);
+    return () => {
+      window.removeEventListener('dragover', preventDefault);
+      window.removeEventListener('drop', preventDefault);
+    };
+  }, []);
 
   const resetForm = () => {
     setEditingId(null);
@@ -140,6 +165,10 @@ export function AdminThemeDetailPage() {
 
   const handleUpload = async (file: File, characterId: number) => {
     if (!theme) return;
+    if (!isImageFile(file)) {
+      setError(t('adminInvalidImageFile'));
+      return;
+    }
     setLoading(true);
     setUploadTargetId(characterId);
     setError('');
@@ -158,6 +187,33 @@ export function AdminThemeDetailPage() {
     }
   };
 
+  const handleCardDragOver = (e: DragEvent<HTMLDivElement>, characterId: number) => {
+    if (!acceptsFileDrop(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDragOverCharacterId(characterId);
+  };
+
+  const handleCardDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    const related = e.relatedTarget as Node | null;
+    if (!e.currentTarget.contains(related)) {
+      setDragOverCharacterId(null);
+    }
+  };
+
+  const handleCardDrop = (e: DragEvent<HTMLDivElement>, characterId: number) => {
+    e.preventDefault();
+    setDragOverCharacterId(null);
+    if (loading) return;
+
+    const file = Array.from(e.dataTransfer.files).find(isImageFile);
+    if (!file) {
+      setError(t('adminInvalidImageFile'));
+      return;
+    }
+    void handleUpload(file, characterId);
+  };
+
   const lang = i18n.language;
 
   if (!theme && !error) {
@@ -174,6 +230,7 @@ export function AdminThemeDetailPage() {
         <div className="mt-4 mb-6">
           <h2 className="text-2xl font-bold text-straw">{theme.name_zh}</h2>
           <p className="text-parchment/70">{theme.name_en}</p>
+          <p className="text-sm text-parchment/50 mt-2">{t('adminDropImagePageHint')}</p>
         </div>
       )}
 
@@ -225,14 +282,54 @@ export function AdminThemeDetailPage() {
 
       {error && <p className="text-red-400 mb-4">{error}</p>}
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const targetId = pendingUploadCharacterId.current;
+          e.target.value = '';
+          pendingUploadCharacterId.current = null;
+          if (file && targetId) {
+            void handleUpload(file, targetId);
+          }
+        }}
+      />
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {characters.map((character) => {
           const displayName = characterName(character, lang);
+          const isDragOver = dragOverCharacterId === character.id;
+          const isUploading = loading && uploadTargetId === character.id;
           return (
-            <Card
+            <div
               key={character.id}
-              className={!character.is_active ? 'opacity-50' : ''}
+              onDragEnter={(e) => handleCardDragOver(e, character.id)}
+              onDragOver={(e) => handleCardDragOver(e, character.id)}
+              onDragLeave={handleCardDragLeave}
+              onDrop={(e) => handleCardDrop(e, character.id)}
             >
+              <Card
+                className={clsx(
+                  'relative transition-shadow h-full',
+                  !character.is_active && 'opacity-50',
+                  isDragOver && 'ring-2 ring-straw shadow-straw/30 shadow-lg'
+                )}
+              >
+              {isDragOver && (
+                <div className="absolute inset-0 z-10 rounded-2xl border-2 border-dashed border-straw bg-straw/15 flex items-center justify-center pointer-events-none">
+                  <p className="text-sm font-semibold text-straw px-4 text-center">
+                    {t('adminDropImageHint')}
+                  </p>
+                </div>
+              )}
+              {isUploading && !isDragOver && (
+                <div className="absolute inset-0 z-10 rounded-2xl bg-ocean/70 flex items-center justify-center pointer-events-none">
+                  <p className="text-sm font-medium text-straw">{t('loading')}</p>
+                </div>
+              )}
               <div className="flex flex-col items-center text-center">
                 <CharacterImage imageUrl={character.image_url} name={displayName} />
                 <p className="font-bold mt-3">{character.name_zh}</p>
@@ -248,34 +345,20 @@ export function AdminThemeDetailPage() {
                 <Button
                   className="flex-1"
                   variant="ghost"
-                  disabled={loading && uploadTargetId === character.id}
+                  disabled={isUploading}
                   onClick={() => {
                     pendingUploadCharacterId.current = character.id;
                     fileInputRef.current?.click();
                   }}
                 >
-                  {uploadTargetId === character.id ? t('loading') : t('adminUploadImage')}
+                  {isUploading ? t('loading') : t('adminUploadImage')}
                 </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    const targetId = pendingUploadCharacterId.current;
-                    e.target.value = '';
-                    pendingUploadCharacterId.current = null;
-                    if (file && targetId) {
-                      handleUpload(file, targetId);
-                    }
-                  }}
-                />
                 <Button variant="danger" onClick={() => handleDelete(character.id)}>
                   {t('delete')}
                 </Button>
               </div>
-            </Card>
+              </Card>
+            </div>
           );
         })}
       </div>
