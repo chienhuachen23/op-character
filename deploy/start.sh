@@ -11,19 +11,31 @@ export PORT="${PORT:-8080}"
 
 mkdir -p "$DATA_DIR/media"
 
+echo "Starting (PORT=${PORT})"
+
 echo "Running migrations..."
 python manage.py migrate --noinput
 
 echo "Seeding catalog data..."
 python manage.py seed_one_piece
 
+echo "Rendering nginx config..."
 envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 nginx -t
+
+echo "nginx listen lines:" 
+awk '/listen /{print}' /etc/nginx/conf.d/default.conf || true
+
+echo "static dir exists:" 
+ls -la /app/static/frontend || true
+
+echo "static index exists:" 
+if [ -f /app/static/frontend/index.html ]; then echo "index.html: yes"; else echo "index.html: no"; fi
 
 echo "Starting Daphne on :8001..."
 daphne -b 127.0.0.1 -p 8001 config.asgi:application &
 
-python - <<'PY'
+python - <<'PY2'
 import time
 import urllib.request
 
@@ -42,7 +54,7 @@ for i in range(90):
         time.sleep(1)
 else:
     raise SystemExit("Daphne did not become ready in time")
-PY
+PY2
 
 echo "Starting Nginx on 0.0.0.0:${PORT} (foreground)..."
 exec nginx -g 'daemon off;'
