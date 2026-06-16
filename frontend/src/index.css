@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ocean: #0c4a6e;
+  --color-ocean-light: #0369a1;
+  --color-straw: #fbbf24;
+  --color-straw-dark: #d97706;
+  --color-wood: #78350f;
+  --color-parchment: #fef3c7;
+}
+
+body {
+  @apply min-h-screen bg-gradient-to-br from-ocean via-ocean-light to-sky-900 text-parchment font-sans antialiased;
+}
+
+#root {
+  @apply min-h-screen;
+}

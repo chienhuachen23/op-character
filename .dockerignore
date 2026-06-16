@@ -1,0 +1,15 @@
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+backend/db.sqlite3
+backend/media
+frontend/node_modules
+frontend/dist
+.git
+.cursor
+*.md
+!DEPLOY_RAILWAY.md
+.env
+.env.*
+!.env.example

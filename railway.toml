@@ -1,0 +1,8 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/v1/game-modes"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
