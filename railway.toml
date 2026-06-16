@@ -3,7 +3,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-preDeployCommand = "python manage.py migrate --noinput && python manage.py seed_one_piece"
 startCommand = "/start.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 300

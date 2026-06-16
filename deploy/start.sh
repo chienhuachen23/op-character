@@ -18,8 +18,13 @@ fi
 mkdir -p "$DATA_DIR/media"
 
 echo "PORT=${PORT}"
-echo "FRONTEND_DIST=${FRONTEND_DIST}"
 echo "DATABASE_PATH=${DATABASE_PATH}"
+
+echo "Running migrations..."
+python manage.py migrate --noinput
+
+echo "Seeding catalog data..."
+python manage.py seed_one_piece
 
 if [ -f "${FRONTEND_DIST}/index.html" ]; then
   echo "Frontend bundle: ok"

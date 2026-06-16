@@ -56,7 +56,10 @@ async function adminFetch<T>(path: string, options: RequestInit = {}): Promise<T
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`Backend returned invalid JSON (${url})`);
+    const preview = text.replace(/\s+/g, ' ').slice(0, 120);
+    throw new Error(
+      `Backend returned invalid JSON (${res.status} ${url}). ${preview || 'Empty response'}`
+    );
   }
   if (!res.ok) {
     throw new Error(data.message || `Request failed (${res.status})`);
