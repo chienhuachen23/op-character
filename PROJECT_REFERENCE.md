@@ -1,7 +1,29 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-16（v3）
+> 最后更新：2026-06-16（v4）
+
+---
+
+## 0. 当前状态快照（Agent 快速读）
+
+| 项目 | 状态 |
+|---|---|
+| GitHub | `https://github.com/chienhuachen23/op-character`（`main`） |
+| 生产部署 | Railway 单容器（见 §13、`DEPLOY_RAILWAY.md`） |
+| 本地开发 | 双终端：daphne:8000 + vite:5173 |
+| 玩家鉴权 | `X-Player-Token`（无注册） |
+| 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
+| 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v3→v4）：**
+
+- 再来一局：全员同意后**所有玩家**自动跳转 `/play`（`ResultsPoster.fetchData` + 后端 `_replay_response_state`）
+- 游戏内增加「退出游戏」按钮（回首页，不清 token）
+- **管理员 CMS**：主题/人物/图片维护（`frontend/src/features/admin/` + `catalog/admin_*.py`）
+- 人物卡支持 `image_url` 显示图片（失败回退色块 initials）
+- **Railway 生产架构**：根目录 `Dockerfile` 构建前端 + Daphne 同端口；Whitenoise 静态资源 + SPA fallback；**不用 Nginx**
+- 容器启动时 `migrate` + `seed_one_piece`（**不要**仅用 `preDeployCommand`，Volume 数据库不同步）
 
 ---
 
@@ -21,11 +43,12 @@
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Django 5、DRF、Channels、Daphne |
-| 实时 | WebSocket + Redis（本地可用 InMemory Channel Layer） |
+| 后端 | Django 5、DRF、Channels、Daphne、Whitenoise（生产静态资源） |
+| 实时 | WebSocket + Redis（本地/Railway 可用 InMemory Channel Layer） |
 | 数据库 | MySQL 8（本地默认 SQLite，`USE_SQLITE=true`） |
 | 前端 | React 18、Vite 8、TypeScript、Tailwind CSS 4、Framer Motion |
 | i18n | react-i18next（UI 文案）+ API 双语字段（人物名） |
+| 部署 | Railway（生产）；`docker-compose`（本地全栈，前后端分离端口） |
 
 ---
 
@@ -34,33 +57,27 @@
 ```text
 op-character/
 ├── PROJECT_REFERENCE.md      # 本文档
+├── DEPLOY_RAILWAY.md         # Railway 部署步骤与排错
 ├── README.md
-├── docker-compose.yml
+├── Dockerfile                # ★ 生产镜像（前端 build + Daphne）
+├── railway.toml
+├── deploy/start.sh           # 生产启动：migrate → seed → daphne
+├── docker-compose.yml        # 本地 Docker（前后端分离，非生产架构）
 ├── backend/
 │   ├── config/
 │   ├── apps/
-│   │   ├── core/
-│   │   ├── catalog/
-│   │   ├── rooms/            # Model、WS、房间 API、preview
-│   │   └── games/
-│   │       ├── base.py
-│   │       ├── registry.py
-│   │       └── trait_guess/
-│   │           └── engine.py # ★ 游戏状态机核心
-│   ├── manage.py
-│   └── requirements.txt
+│   │   ├── core/             # middleware.py：SPA fallback、/health
+│   │   ├── catalog/          # 主题/人物 + admin API
+│   │   ├── rooms/
+│   │   └── games/trait_guess/engine.py
+│   └── manage.py
 └── frontend/
-    ├── src/
-    │   ├── api/client.ts
-    │   ├── ws/useRoomWebSocket.ts
-    │   ├── i18n/index.ts
-    │   ├── features/
-    │   │   ├── home/HomePage.tsx
-    │   │   ├── lobby/LobbyPage.tsx
-    │   │   ├── game/GameBoard.tsx
-    │   │   └── results/ResultsPoster.tsx
-    │   └── components/
-    └── vite.config.ts
+    └── src/
+        ├── api/client.ts, adminClient.ts
+        ├── features/
+        │   ├── home/ lobby/ game/ results/
+        │   └── admin/        # ★ 内容管理 CMS
+        └── components/CharacterCard.tsx
 ```
 
 ---
@@ -95,20 +112,36 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 | `USE_SQLITE` | `true` | 无需 MySQL |
 | `USE_INMEMORY_CHANNEL` | `true` | 无需 Redis |
 | `DJANGO_DEBUG` | `true` | CORS + `ALLOWED_HOSTS=*` |
+| `ADMIN_API_KEY` | `dev-admin-key`（示例） | 管理员 CMS 密钥；未设置则管理 API 返回 `ADMIN_DISABLED` |
+| `DATA_DIR` | 可选 | 持久化目录；Railway 卷挂载 `/app/data` |
+| `DATABASE_PATH` | 可选 | SQLite 路径，默认 `{DATA_DIR}/db.sqlite3` |
 
 ### 4.4 前端 API 连接
 
-`frontend/src/api/client.ts` 开发模式 **直连** `http://127.0.0.1:8000`（依赖 Django CORS）。
+**本地开发**：`client.ts` 在 `import.meta.env.DEV` 时直连 `http://127.0.0.1:8000`。
 
-`vite.config.ts` 亦配置 `/api`、`/ws` 代理到 8000，可作备选。
+**生产（Railway 同域）**：`npm run build` 不设 `VITE_API_URL` 时 `API_BASE=''`，API/WS 走相对路径（同域名）。
 
-### 4.5 已知端口问题
+`vite.config.ts` 配置 `/api`、`/ws` 代理到 8000，可作备选。
+
+### 4.5 跨设备本地测试（未部署时）
+
+同 WiFi 下前端需指定电脑 IP：
+
+```bash
+VITE_API_URL=http://192.168.x.x:8000 VITE_WS_URL=ws://192.168.x.x:8000 npm run dev -- --host
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
+```
+
+分享链接勿用 `127.0.0.1`。详见历史会话 / `DEPLOY_RAILWAY.md` 局域网说明。
+
+### 4.6 已知端口问题
 
 - 8000 常被占用 → `Cannot reach backend` 或返回 HTML
 - 排查：`lsof -i :8000`
 - 若冲突：daphne 改端口（如 8001），同步改 `client.ts` 与 `vite.config.ts`
 
-### 4.6 修改后端后
+### 4.7 修改后端后
 
 **必须重启 daphne**，否则仍跑旧逻辑（常见报错如 `Not in guessing phase`）。
 
@@ -126,13 +159,26 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
 ### 5.2 接口鉴权分级
 
-| 类型 | 示例 | Token |
+| 类型 | 示例 | 鉴权 |
 |---|---|---|
-| 公开 | `GET /game-modes`、`POST /rooms`、`POST /rooms/join` | 否 |
-| 公开预览 | `GET /rooms/{code}/preview` | 否 |
-| 玩家 | `GET /rooms/{code}`、`GET /matches/current`、游戏写操作 | 是 |
+| 公开 | `GET /game-modes`、`POST /rooms`、`POST /rooms/join` | 无 |
+| 公开预览 | `GET /rooms/{code}/preview` | 无 |
+| 健康检查 | `GET /health` | 无 |
+| 玩家 | `GET /rooms/{code}`、`GET /matches/current`、游戏写操作 | `X-Player-Token` |
+| 管理员 | `GET/POST /api/v1/admin/*` | `X-Admin-Key` = `ADMIN_API_KEY` |
 
-### 5.3 分享链接流程
+### 5.3 管理员 CMS
+
+- 入口：首页底部「管理员入口」→ `/admin`
+- 登录：密钥存 `localStorage`（`admin_api_key`），请求头 `X-Admin-Key`
+- 未配置 `ADMIN_API_KEY` → `403 ADMIN_DISABLED`（「Admin API is disabled」）
+- 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
+- 图片：上传到 `media/characters/{theme_slug}/`，URL 写入 `characters.image_url`
+- 后端：`catalog/admin_views.py`、`catalog/permissions.py`、`catalog/admin_serializers.py`
+- 前端：`api/adminClient.ts`、`features/admin/*`
+- **勿与** Django Admin（`/admin/` 在 Django 侧，React 路由 `/admin` 不同）混淆
+
+### 5.4 分享链接流程
 
 1. 分享 `/room/ABC123`
 2. 新玩家无 token，或 token 属于其他房间 → `LobbyPage` 显示加入表单（调 `GET /rooms/{code}/preview`）
@@ -149,6 +195,10 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 ```text
 waiting → playing → replay_pending → (全员同意 replay) → playing（新 match）
 ```
+
+- `request_replay` / `vote_replay(approved=true)` 等价于投赞成票
+- 全员同意后：`room.current_match` 换新 match，`room.status=playing`；`_replay_response_state` 返回**新 match** 状态
+- 前端 `ResultsPoster`：`room_status===playing` 时跳转 `/play`（含 WS `match.updated`）
 
 ### 6.2 每轮（Round）阶段
 
@@ -281,6 +331,8 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 | `_pending_guess_scores()` | rating 阶段待结算猜对分（不含评价分） |
 | `submit_author_hint_rating()` | 按作者评价提示 |
 | `MatchResultBuilder.build()` | 终局复盘数据（按轮） |
+| `_replay_response_state()` | 再来一局完成后返回新 match 状态 |
+| `_check_replay_complete()` | 三人全 approved → 创建新 match |
 
 ---
 
@@ -290,7 +342,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 
 - `game_modes`：slug=`trait_guess`
 - `themes`：slug=`one_piece`
-- `characters`：name_zh, name_en, image_url（UI 用色块 initials 占位）
+- `characters`：name_zh, name_en, image_url, is_active
 
 ### 7.2 房间与对局（`rooms`）
 
@@ -364,7 +416,18 @@ python manage.py seed_one_piece
 | POST | `/matches/{id}/replay/vote` | - | `{approved}` | 投票再来一局 |
 | GET | `/characters` | Token | - | 人物列表（保留，猜谜已不用下拉） |
 
-### 8.3 `GET /matches/current` 响应要点
+### 8.3 管理员 CMS（`X-Admin-Key`）
+
+| Method | Path | Body | 说明 |
+|---|---|---|---|
+| POST | `/admin/auth/verify` | - | 验证密钥 |
+| GET/POST | `/admin/themes` | 创建：`{slug,name_zh,name_en,game_mode}` | 主题列表/新建 |
+| GET/PATCH | `/admin/themes/{id}` | - | 主题详情/更新 |
+| GET/POST | `/admin/themes/{id}/characters` | 人物字段 | 人物列表/新建 |
+| PATCH/DELETE | `/admin/characters/{id}` | - | 更新/删除人物 |
+| POST | `/admin/upload-image` | `multipart: file, theme_slug` | 上传图片 |
+
+### 8.4 `GET /matches/current` 响应要点
 
 ```json
 {
@@ -413,7 +476,7 @@ python manage.py seed_one_piece
 
 `hint_rating_groups` / `round_result` 仅在 `phase=rating` 时有值。猜对后 `self.character` 变为人物对象。
 
-### 8.4 `GET /matches/{id}/summary` 终局复盘
+### 8.5 `GET /matches/{id}/summary` 终局复盘
 
 `get_summary()` 始终调用 `MatchResultBuilder.build()` 从 DB 重建（不读陈旧 `match.result`）。
 
@@ -471,10 +534,13 @@ python manage.py seed_one_piece
 
 | 路由 | 组件 | 功能 |
 |---|---|---|
-| `/` | `HomePage` | 创建/加入、settings |
+| `/` | `HomePage` | 创建/加入、settings；底部管理员入口 |
 | `/room/:code` | `LobbyPage` | 大厅 / 分享链接加入 |
-| `/room/:code/play` | `GameBoard` | 游戏主界面 |
+| `/room/:code/play` | `GameBoard` | 游戏主界面；右上角「退出游戏」 |
 | `/room/:code/results` | `ResultsPoster` | 终局复盘 + 再来一局 |
+| `/admin` | `AdminLoginPage` | 管理员登录 |
+| `/admin/themes` | `AdminThemesPage` | 主题列表 |
+| `/admin/themes/:themeId` | `AdminThemeDetailPage` | 人物与图片维护 |
 
 ### 10.1 GameBoard 布局
 
@@ -498,9 +564,17 @@ python manage.py seed_one_piece
   - 当轮三人人物卡（来自 `assignments_snapshot`）
   - 每位玩家的提示 + 👍/👎；点赞最高标「本轮最佳 👑」
   - 昵称下：`{人物A} 和 {人物B} 的联系为`，下列提示正文
-- **再来一局**区块：不变
+- **再来一局**区块：
+  - 仅「再来一局」（`requestReplay`）+「拒绝」；已投票显示「已同意再来一局」
+  - 全员同意后：`fetchData` / `handleReplay` 检测 `room_status===playing` → 全员跳转 `/play`
+  - WebSocket `match.updated` 也会触发 `fetchData` 跳转
 
-### 10.3 UI 主题
+### 10.3 人物头像
+
+- `image_url` 有值时显示图片（`resolveMediaUrl`）；加载失败回退色块 + 名字前两字
+- 种子数据路径 `/characters/one_piece/*.svg` 可能 404，上传真实图片后正常
+
+### 10.4 UI 主题
 
 - 藏蓝 + 草帽黄（`ocean`, `straw`, `parchment`）
 - 人物头像：彩色圆形 + 名字前两字
@@ -548,13 +622,59 @@ cd frontend && npm run build
 
 ---
 
-## 13. Docker
+## 13. 生产部署（Railway）
+
+> 详细步骤：**[DEPLOY_RAILWAY.md](./DEPLOY_RAILWAY.md)**
+
+### 13.1 架构（当前）
+
+```text
+https://{app}.up.railway.app
+  ├── /health           → Django health_view
+  ├── /api/v1/*         → DRF API
+  ├── /ws/*             → Channels WebSocket
+  ├── /media/*          → 上传图片（MEDIA_ROOT）
+  └── /*                → React SPA（Whitenoise + SPAFallbackMiddleware）
+```
+
+- 根目录 `Dockerfile`：多阶段构建（`npm run build` → 复制到 `/app/static/frontend`）
+- `deploy/start.sh`：**migrate → seed → `exec daphne -b 0.0.0.0 -p $PORT`**
+- `railway.toml`：healthcheck `/health`；**勿**在 Dockerfile 使用 `VOLUME`（Railway 不支持）
+- 持久化：Railway Volume 挂载 **`/app/data`**（SQLite + media）
+
+### 13.2 Railway 环境变量（必填/推荐）
+
+| 变量 | 说明 |
+|---|---|
+| `DJANGO_SECRET_KEY` | 随机密钥 |
+| `ADMIN_API_KEY` | 管理员 CMS 密码 |
+| `DJANGO_DEBUG` | `false` |
+| `USE_SQLITE` | `true` |
+| `USE_INMEMORY_CHANNEL` | `true` |
+| `DATA_DIR` | `/app/data` |
+| `PORT` | **由 Railway 自动注入，勿手动覆盖** |
+
+### 13.3 Railway 502 / 管理页排错要点
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| 502 / `x-railway-fallback` | Target Port 与监听端口不一致 | Networking → Target Port = **8080**；删手动 `PORT` 变量 |
+| `Admin API is disabled` | 未设 `ADMIN_API_KEY` | Variables 添加后 Redeploy |
+| `invalid JSON` on `/admin/themes` | 后端 500 返回 HTML（常因 DB 未 migrate） | 确保 `start.sh` 含 migrate+seed；**勿仅依赖 preDeploy** |
+| 登录成功但列表失败 | 登录不查 DB，列表查 DB | 同上 |
+
+### 13.4 不适合的平台
+
+- **Vercel 全栈**：不支持 Django Channels 长连接 WebSocket + 持久化 SQLite/上传
+- 可选：Vercel 仅前端 + Railway 后端（需配 CORS 与 `VITE_API_URL`）
+
+### 13.5 本地 Docker Compose
 
 ```bash
 docker-compose up --build
 ```
 
-MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
+前后端分离（5173 + 8000），**与 Railway 生产架构不同**，仅适合本地全栈试跑。
 
 ---
 
@@ -563,12 +683,12 @@ MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
 | 项目 | 状态 |
 |---|---|
 | 用户注册/登录 | 未实现 |
-| 多主题 UI 选择 | DB 预留，前端写死海贼王 |
-| 真实人物图片 | 色块占位 |
+| 多主题 UI 选择（玩家建房） | DB 预留，建房 UI 仍写死海贼王 |
+| 人物图片 | 支持 `image_url` + 管理员上传；无图时色块占位 |
 | 猜测自动匹配人物名 | 人工评判，非字符串精确匹配 |
 | 阶段超时自动推进 | 未实现 |
 | 房主 advance 阶段 | 已移除 |
-| 管理员后台 | Django admin |
+| Django Admin (`/admin/` Django) | 保留；日常用 React `/admin` CMS |
 | 音效 | 未实现 |
 
 ---
@@ -592,6 +712,10 @@ MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
 | 终局页空白 | 旧 `match.result` 格式与前端不兼容 | `get_summary` 已改为 DB 重建；硬刷新前端 |
 | 复盘无当轮人物 | 旧局无 `assignments_snapshot` | 新开一局；或 fallback 显示终局人物 |
 | 同浏览器测多人 | 共享 localStorage | 普通窗口 + 无痕窗口 |
+| 再来一局仅最后一人进新局 | 未跳转 `/play` | 已修：`ResultsPoster` WS + `fetchData` |
+| Railway `VOLUME` in Dockerfile | 构建失败 | 用 Railway Dashboard 挂 Volume |
+| 管理员 `invalid JSON` | DB 500 HTML | `start.sh` migrate+seed；检查 `/api/v1/game-modes` 是否 JSON |
+| 管理员 `ADMIN_DISABLED` | 无 `ADMIN_API_KEY` | Railway Variables 配置 |
 
 ---
 
@@ -614,7 +738,19 @@ MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
 - 后端：`MatchResultBuilder`、`TraitGuessEngine._snapshot_round_assignments`、`get_summary`
 - 前端：`ResultsPoster.tsx`、`client.ts` 的 `MatchSummary` 类型
 
-### 16.4 不要破坏的约定
+### 16.5 修改管理员 CMS
+
+- 后端：`catalog/admin_views.py`、`admin_serializers.py`、`permissions.py`、`urls.py`
+- 前端：`features/admin/*`、`api/adminClient.ts`
+- 图片：`MEDIA_ROOT`（生产 `DATA_DIR/media`）；`resolveMediaUrl()` 拼接 API 域名
+
+### 16.6 修改生产部署
+
+- `Dockerfile`、`deploy/start.sh`、`railway.toml`、`DEPLOY_RAILWAY.md`
+- **勿**将 migrate 仅放 `preDeployCommand`（与运行时 Volume 不同步）
+- **勿**在 Dockerfile 使用 `VOLUME` 指令
+
+### 16.7 不要破坏的约定
 
 - 提示与猜测在活跃期**并行**
 - 轮次结束：**三人全部 correct 或 skip**，且无 pending 投票
@@ -626,6 +762,8 @@ MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
 - 提示评价按**作者**计票与计分，非按单条 hint
 - `Guess.objects.create` 必须带 `guess_history=[]`
 - 分享链接加入须处理 **token 房间不匹配**
+- 再来一局全员同意后须 **所有客户端** 跳转 `/play`（WS + API 双路径）
+- 生产环境 **`ADMIN_API_KEY` 未设置则管理 API 关闭**
 
 ---
 
@@ -633,16 +771,22 @@ MySQL 8 + Redis 7 + backend(8000) + frontend(5173)。
 
 ```
 backend/apps/games/trait_guess/engine.py    # 游戏状态机 ★
-backend/apps/rooms/models.py                # Guess、AuthorHintRating、assignments_snapshot
+backend/apps/catalog/admin_views.py         # 管理员 API ★
+backend/apps/core/middleware.py             # SPA fallback、health
+backend/config/settings.py                  # Whitenoise、MEDIA、CORS、ALLOWED_HOSTS
+deploy/start.sh                             # Railway 启动脚本 ★
+Dockerfile                                  # 生产镜像 ★
+backend/apps/rooms/models.py
 backend/apps/rooms/services/room_service.py
-backend/apps/rooms/views.py                 # 含 RoomPreviewView
-backend/apps/rooms/consumers.py
-frontend/src/features/game/GameBoard.tsx    # 游戏 UI ★
-frontend/src/features/results/ResultsPoster.tsx  # 终局复盘 ★
-frontend/src/features/lobby/LobbyPage.tsx   # 含 session 房间绑定
-frontend/src/api/client.ts                  # 含 storeSession / sessionMatchesRoom
+backend/apps/rooms/views.py
+frontend/src/features/game/GameBoard.tsx
+frontend/src/features/results/ResultsPoster.tsx
+frontend/src/features/admin/AdminThemesPage.tsx
+frontend/src/features/admin/AdminThemeDetailPage.tsx
+frontend/src/api/client.ts
+frontend/src/api/adminClient.ts
 frontend/src/i18n/index.ts
-backend/apps/catalog/management/commands/seed_one_piece.py
+DEPLOY_RAILWAY.md
 ```
 
 ---
@@ -666,3 +810,11 @@ backend/apps/catalog/management/commands/seed_one_piece.py
 | 收到提示 UI | 两列卡片按玩家聚合 |
 | 终局复盘 v2 | 按轮人物+提示+赞踩；`get_summary` DB 重建；`recapHintLink` 文案 |
 | guess_history 修复 | migrations 0004–0006；create 时显式 `[]` |
+| 再来一局跳转修复 | 全员同意后 WS/fetchData 跳转；简化按钮；`_replay_response_state` |
+| 退出游戏 | `GameBoard` 右上角回首页 |
+| 管理员 CMS v1 | React `/admin`；`ADMIN_API_KEY`；主题/人物/图片 CRUD |
+| 人物图片显示 | `CharacterCard` + `resolveMediaUrl` |
+| Railway 部署 | 根 `Dockerfile`、Daphne+Whitenoise 同端口、`DEPLOY_RAILWAY.md` |
+| GitHub | `chienhuachen23/op-character` |
+| Railway 502 修复 | 去掉 Nginx/Dockerfile VOLUME；`exec daphne`；Target Port 8080 |
+| Railway 管理 API | 容器内 migrate+seed；禁用仅 preDeploy 写库 |
