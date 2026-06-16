@@ -35,6 +35,7 @@ ENV DATA_DIR=/app/data \
     USE_SQLITE=true \
     USE_INMEMORY_CHANNEL=true \
     DJANGO_DEBUG=false \
+    DJANGO_ALLOWED_HOSTS=* \
     PORT=8080
 
 EXPOSE 8080
