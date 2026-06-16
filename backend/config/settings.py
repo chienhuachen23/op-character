@@ -52,12 +52,14 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.core.middleware.SPAFallbackMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -114,6 +116,10 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+FRONTEND_DIST = os.getenv("FRONTEND_DIST", "")
+if FRONTEND_DIST:
+    WHITENOISE_ROOT = FRONTEND_DIST
+    WHITENOISE_INDEX_FILE = True
 MEDIA_URL = "/media/"
 _data_dir = os.getenv("DATA_DIR", "").strip()
 MEDIA_ROOT = Path(_data_dir) / "media" if _data_dir else BASE_DIR / "media"

@@ -7,11 +7,12 @@ export USE_INMEMORY_CHANNEL="${USE_INMEMORY_CHANNEL:-true}"
 export DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/db.sqlite3}"
 export RAILWAY_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-true}"
 export DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-*}"
-export PORT="${PORT:-8080}"
+export FRONTEND_DIST="${FRONTEND_DIST:-/app/static/frontend}"
+export PORT="${PORT:-8000}"
 
 mkdir -p "$DATA_DIR/media"
 
-echo "Starting (PORT=${PORT})"
+echo "Starting (PORT=${PORT}, FRONTEND_DIST=${FRONTEND_DIST})"
 
 echo "Running migrations..."
 python manage.py migrate --noinput
@@ -19,42 +20,11 @@ python manage.py migrate --noinput
 echo "Seeding catalog data..."
 python manage.py seed_one_piece
 
-echo "Rendering nginx config..."
-envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
-nginx -t
+if [ -f "${FRONTEND_DIST}/index.html" ]; then
+  echo "Frontend bundle: ok"
+else
+  echo "Frontend bundle: missing ${FRONTEND_DIST}/index.html"
+fi
 
-echo "nginx listen lines:" 
-awk '/listen /{print}' /etc/nginx/conf.d/default.conf || true
-
-echo "static dir exists:" 
-ls -la /app/static/frontend || true
-
-echo "static index exists:" 
-if [ -f /app/static/frontend/index.html ]; then echo "index.html: yes"; else echo "index.html: no"; fi
-
-echo "Starting Daphne on :8001..."
-daphne -b 127.0.0.1 -p 8001 config.asgi:application &
-
-python - <<'PY2'
-import time
-import urllib.request
-
-time.sleep(1)
-
-url = "http://127.0.0.1:8001/api/v1/game-modes"
-for i in range(90):
-    try:
-        with urllib.request.urlopen(url, timeout=2) as response:
-            if response.status == 200:
-                print("Daphne is ready")
-                break
-    except Exception as exc:
-        if i % 10 == 0:
-            print(f"Waiting for Daphne... ({i}s) {exc}")
-        time.sleep(1)
-else:
-    raise SystemExit("Daphne did not become ready in time")
-PY2
-
-echo "Starting Nginx on 0.0.0.0:${PORT} (foreground)..."
-exec nginx -g 'daemon off;'
+echo "Starting Daphne on 0.0.0.0:${PORT}..."
+exec daphne -b 0.0.0.0 -p "${PORT}" config.asgi:application

@@ -17,8 +17,6 @@ RUN apt-get update && apt-get install -y \
     default-libmysqlclient-dev \
     build-essential \
     pkg-config \
-    nginx \
-    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -26,18 +24,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 COPY --from=frontend-build /frontend/dist /app/static/frontend
-COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY deploy/start.sh /start.sh
-RUN chmod +x /start.sh \
-    && rm -f /etc/nginx/sites-enabled/default
+RUN chmod +x /start.sh
 
 ENV DATA_DIR=/app/data \
     USE_SQLITE=true \
     USE_INMEMORY_CHANNEL=true \
     DJANGO_DEBUG=false \
     DJANGO_ALLOWED_HOSTS=* \
-    PORT=8080
-
-EXPOSE 8080
+    FRONTEND_DIST=/app/static/frontend
 
 CMD ["/start.sh"]
