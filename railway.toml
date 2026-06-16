@@ -6,3 +6,6 @@ dockerfilePath = "Dockerfile"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
+
+# Railway requires the app to listen on $PORT quickly. start.sh starts Daphne
+# before running migrations so /health can respond during startup.

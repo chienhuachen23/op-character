@@ -14,12 +14,6 @@ mkdir -p "$DATA_DIR/media"
 
 echo "Starting (PORT=${PORT}, FRONTEND_DIST=${FRONTEND_DIST})"
 
-echo "Running migrations..."
-python manage.py migrate --noinput
-
-echo "Seeding catalog data..."
-python manage.py seed_one_piece
-
 if [ -f "${FRONTEND_DIST}/index.html" ]; then
   echo "Frontend bundle: ok"
 else
@@ -27,4 +21,17 @@ else
 fi
 
 echo "Starting Daphne on 0.0.0.0:${PORT}..."
-exec daphne -b 0.0.0.0 -p "${PORT}" config.asgi:application
+daphne -b 0.0.0.0 -p "${PORT}" config.asgi:application &
+DAPHNE_PID=$!
+
+# Give Daphne a moment to bind PORT before Railway probes it.
+sleep 1
+
+echo "Running migrations..."
+python manage.py migrate --noinput
+
+echo "Seeding catalog data..."
+python manage.py seed_one_piece
+
+echo "Startup complete. /health should return ok."
+wait "${DAPHNE_PID}"
