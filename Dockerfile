@@ -37,8 +37,6 @@ ENV DATA_DIR=/app/data \
     DJANGO_DEBUG=false \
     PORT=8080
 
-VOLUME ["/app/data"]
-
 EXPOSE 8080
 
 CMD ["/start.sh"]
