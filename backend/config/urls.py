@@ -10,7 +10,8 @@ from apps.core.middleware import health_view
 
 urlpatterns = [
     path("health", health_view),
-    path("admin/", admin.site.urls),
+    # React CMS uses /admin/* — keep Django's built-in admin on a separate path.
+    path("django-admin/", admin.site.urls),
     path("api/v1/", include("apps.rooms.urls")),
     path("api/v1/", include("apps.catalog.urls")),
     path("api/v1/", include("apps.games.urls")),
