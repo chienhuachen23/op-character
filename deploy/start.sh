@@ -11,27 +11,22 @@ export PORT="${PORT:-8080}"
 
 mkdir -p "$DATA_DIR/media"
 
-envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
-nginx -t
-
-echo "Starting Nginx on :${PORT} (health checks can pass immediately)..."
-nginx
-
 echo "Running migrations..."
 python manage.py migrate --noinput
 
 echo "Seeding catalog data..."
 python manage.py seed_one_piece
 
+envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
+nginx -t
+
 echo "Starting Daphne on :8001..."
 daphne -b 127.0.0.1 -p 8001 config.asgi:application &
 
 python - <<'PY'
 import time
-import urllib.error
 import urllib.request
 
-# Daphne needs a moment to bind the socket after fork.
 time.sleep(1)
 
 url = "http://127.0.0.1:8001/api/v1/game-modes"
@@ -49,5 +44,5 @@ else:
     raise SystemExit("Daphne did not become ready in time")
 PY
 
-echo "All services ready."
-exec tail -f /dev/null
+echo "Starting Nginx on 0.0.0.0:${PORT} (foreground)..."
+exec nginx -g 'daemon off;'
