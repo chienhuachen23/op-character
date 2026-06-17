@@ -14,7 +14,7 @@ from .admin_serializers import (
     AdminThemeSerializer,
     AdminThemeWriteSerializer,
 )
-from .models import Character, Theme
+from .models import Character, CharacterImage, Theme
 from .permissions import AdminAPIKeyPermission
 
 
@@ -70,7 +70,7 @@ class AdminCharacterListCreateView(APIView):
 
     def get(self, request, theme_id):
         theme = self.get_theme(theme_id)
-        characters = theme.characters.order_by("name_en")
+        characters = theme.characters.prefetch_related("images").order_by("name_en")
         return Response(AdminCharacterSerializer(characters, many=True).data)
 
     def post(self, request, theme_id):
@@ -132,7 +132,12 @@ class AdminCharacterDetailView(APIView):
     permission_classes = [AdminAPIKeyPermission]
 
     def get_character(self, character_id):
-        character = Character.objects.select_related("theme").filter(id=character_id).first()
+        character = (
+            Character.objects.select_related("theme")
+            .prefetch_related("images")
+            .filter(id=character_id)
+            .first()
+        )
         if not character:
             raise GameAPIException("NOT_FOUND", "Character not found", 404)
         return character
@@ -155,12 +160,7 @@ class AdminImageUploadView(APIView):
 
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 
-    def post(self, request):
-        uploaded = request.FILES.get("file")
-        if not uploaded:
-            raise GameAPIException("INVALID_REQUEST", "No file uploaded", 400)
-
-        theme_slug = (request.data.get("theme_slug") or "misc").strip().lower()
+    def _save_upload(self, uploaded, theme_slug: str) -> str:
         ext = os.path.splitext(uploaded.name)[1].lower()
         if ext not in self.ALLOWED_EXTENSIONS:
             raise GameAPIException(
@@ -168,8 +168,73 @@ class AdminImageUploadView(APIView):
                 f"Unsupported file type. Allowed: {', '.join(sorted(self.ALLOWED_EXTENSIONS))}",
                 400,
             )
-
         filename = f"{uuid.uuid4().hex}{ext}"
         path = default_storage.save(f"characters/{theme_slug}/{filename}", uploaded)
-        url = default_storage.url(path)
+        return default_storage.url(path)
+
+    def post(self, request):
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            raise GameAPIException("INVALID_REQUEST", "No file uploaded", 400)
+
+        theme_slug = (request.data.get("theme_slug") or "misc").strip().lower()
+        url = self._save_upload(uploaded, theme_slug)
         return Response({"url": url})
+
+
+class AdminCharacterImageUploadView(APIView):
+    permission_classes = [AdminAPIKeyPermission]
+    ALLOWED_EXTENSIONS = AdminImageUploadView.ALLOWED_EXTENSIONS
+
+    def get_character(self, character_id):
+        character = (
+            Character.objects.select_related("theme")
+            .prefetch_related("images")
+            .filter(id=character_id)
+            .first()
+        )
+        if not character:
+            raise GameAPIException("NOT_FOUND", "Character not found", 404)
+        return character
+
+    def post(self, request, character_id):
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            raise GameAPIException("INVALID_REQUEST", "No file uploaded", 400)
+
+        character = self.get_character(character_id)
+        url = AdminImageUploadView()._save_upload(uploaded, character.theme.slug)
+        next_order = character.images.count()
+        CharacterImage.objects.create(
+            character=character,
+            image_url=url,
+            sort_order=next_order,
+        )
+        character.image_url = url
+        character.save(update_fields=["image_url"])
+        character = self.get_character(character_id)
+        return Response(AdminCharacterSerializer(character).data, status=201)
+
+
+class AdminCharacterImageDeleteView(APIView):
+    permission_classes = [AdminAPIKeyPermission]
+
+    def delete(self, request, character_id, image_id):
+        character = (
+            Character.objects.prefetch_related("images")
+            .filter(id=character_id)
+            .first()
+        )
+        if not character:
+            raise GameAPIException("NOT_FOUND", "Character not found", 404)
+
+        image = character.images.filter(id=image_id).first()
+        if not image:
+            raise GameAPIException("NOT_FOUND", "Image not found", 404)
+        image.delete()
+
+        remaining = character.images.order_by("sort_order", "id").first()
+        character.image_url = remaining.image_url if remaining else ""
+        character.save(update_fields=["image_url"])
+        character = Character.objects.prefetch_related("images").get(id=character_id)
+        return Response(AdminCharacterSerializer(character).data)

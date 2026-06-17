@@ -44,3 +44,22 @@ class Character(models.Model):
 
     def __str__(self):
         return self.name_en
+
+
+class CharacterImage(models.Model):
+    character = models.ForeignKey(
+        Character, on_delete=models.CASCADE, related_name="images"
+    )
+    image_url = models.CharField(max_length=500)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "character_images"
+        ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["character", "sort_order"]),
+        ]
+
+    def __str__(self):
+        return f"{self.character.name_en} #{self.id}"

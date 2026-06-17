@@ -91,6 +91,7 @@ class MatchPlayerAssignment(models.Model):
     character = models.ForeignKey(
         "catalog.Character", on_delete=models.PROTECT, related_name="assignments"
     )
+    display_image_url = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
         db_table = "match_player_assignments"

@@ -15,7 +15,7 @@ import {
   exportCharactersCsv,
   parseCharacterCsv,
 } from './characterCsv';
-import { filterCharacters } from './characterFilters';
+import { filterCharacters, characterCoverImageUrl } from './characterFilters';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
 
@@ -172,20 +172,14 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const uploadImageForCharacter = async (file: File, characterId: number): Promise<string> => {
-    if (!theme) {
-      throw new Error('Theme not loaded');
-    }
+  const uploadImageForCharacter = async (file: File, characterId: number) => {
     if (!isImageFile(file)) {
       throw new Error(t('adminInvalidImageFile'));
     }
-    const { url } = await adminApi.uploadImage(file, theme.slug);
-    await adminApi.updateCharacter(characterId, { image_url: url });
-    return url;
+    return adminApi.addCharacterImage(characterId, file);
   };
 
   const handleUpload = async (file: File, characterId: number) => {
-    if (!theme) return;
     const character = characters.find((item) => item.id === characterId);
     setLoading(true);
     setUploadTargetId(characterId);
@@ -193,19 +187,34 @@ export function AdminThemeDetailPage() {
     setUploadMessage('');
     setImportMessage('');
     try {
-      const url = await uploadImageForCharacter(file, characterId);
+      const updated = await uploadImageForCharacter(file, characterId);
       const displayName = character ? characterName(character, lang) : '';
       setCharacters((prev) =>
-        prev.map((item) => (item.id === characterId ? { ...item, image_url: url } : item))
+        prev.map((item) => (item.id === characterId ? updated : item))
       );
       if (displayName) {
         setUploadMessage(t('adminUploadSuccess', { name: displayName }));
       }
-      await loadData();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setUploadTargetId(null);
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteImage = async (characterId: number, imageId: number) => {
+    if (!window.confirm(t('adminDeleteImageConfirm'))) return;
+    setLoading(true);
+    setError('');
+    try {
+      const updated = await adminApi.deleteCharacterImage(characterId, imageId);
+      setCharacters((prev) =>
+        prev.map((item) => (item.id === characterId ? updated : item))
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
       setLoading(false);
     }
   };
@@ -503,7 +512,9 @@ export function AdminThemeDetailPage() {
           const displayName = characterName(character, lang);
           const isDragOver = dragOverCharacterId === character.id;
           const isUploading = loading && uploadTargetId === character.id;
-          const portraitKey = `${character.id}:${character.image_url}`;
+          const coverUrl = characterCoverImageUrl(character);
+          const imageCount = character.image_count ?? character.images?.length ?? 0;
+          const portraitKey = `${character.id}:${imageCount}:${character.images?.map((image) => image.id).join(',') ?? ''}`;
           return (
             <div
               key={character.id}
@@ -532,16 +543,49 @@ export function AdminThemeDetailPage() {
                 </div>
               )}
               <div className="flex flex-col items-center text-center overflow-visible">
-                <CharacterPortrait
-                  key={portraitKey}
-                  imageUrl={character.image_url}
-                  name={displayName}
-                  size="md"
-                />
+                <div className="relative">
+                  <CharacterPortrait
+                    key={portraitKey}
+                    imageUrl={coverUrl}
+                    name={displayName}
+                    size="md"
+                  />
+                  {imageCount > 1 && (
+                    <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-straw text-wood text-xs font-bold flex items-center justify-center">
+                      {imageCount}
+                    </span>
+                  )}
+                </div>
                 <p className="font-bold mt-3">{character.name_zh}</p>
                 <p className="text-sm text-parchment/70">{character.name_en}</p>
+                {imageCount > 0 && (
+                  <p className="text-xs text-parchment/50 mt-1">
+                    {t('adminImageCount', { count: imageCount })}
+                  </p>
+                )}
                 {!character.is_active && (
                   <p className="text-xs text-red-300 mt-1">{t('adminCharacterInactive')}</p>
+                )}
+                {character.images && character.images.length > 0 && (
+                  <div className="flex flex-wrap gap-2 justify-center mt-3 w-full">
+                    {character.images.map((image) => (
+                      <div key={image.id} className="relative">
+                        <CharacterPortrait
+                          imageUrl={image.image_url}
+                          name={displayName}
+                          size="sm"
+                        />
+                        <button
+                          type="button"
+                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-600 text-white text-xs leading-none hover:bg-red-500"
+                          onClick={() => void handleDeleteImage(character.id, image.id)}
+                          aria-label={t('delete')}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
               <div className="flex flex-wrap gap-2 mt-4">
@@ -557,7 +601,7 @@ export function AdminThemeDetailPage() {
                     fileInputRef.current?.click();
                   }}
                 >
-                  {isUploading ? t('loading') : t('adminUploadImage')}
+                  {isUploading ? t('loading') : t('adminAddImage')}
                 </Button>
                 <Button variant="danger" onClick={() => handleDelete(character.id)}>
                   {t('delete')}

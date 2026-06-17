@@ -1,10 +1,26 @@
 import type { AdminCharacter } from '../../api/adminClient';
 
-export function characterHasImage(character: AdminCharacter): boolean {
-  const url = character.image_url?.trim() ?? '';
-  if (!url) return false;
-  if (url.startsWith('/characters/one_piece/')) return false;
+const SEED_IMAGE_PREFIX = '/characters/one_piece/';
+
+function isUsableImageUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith(SEED_IMAGE_PREFIX)) return false;
   return true;
+}
+
+export function characterHasImage(character: AdminCharacter): boolean {
+  if (character.images?.some((image) => isUsableImageUrl(image.image_url))) {
+    return true;
+  }
+  return isUsableImageUrl(character.image_url ?? '');
+}
+
+export function characterCoverImageUrl(character: AdminCharacter): string | undefined {
+  const fromGallery = character.images?.find((image) => isUsableImageUrl(image.image_url));
+  if (fromGallery) return fromGallery.image_url;
+  const legacy = character.image_url?.trim() ?? '';
+  return legacy || undefined;
 }
 
 export function matchesCharacterSearch(character: AdminCharacter, query: string): boolean {

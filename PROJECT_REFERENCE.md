@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-17（v8）
+> 最后更新：2026-06-17（v9）
 
 ---
 
@@ -15,6 +15,12 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v8→v9）：**
+
+- **人物多图**：`character_images` 表；管理员可为同一人物上传多张图；游戏每次分配人物时从图库**随机选一张**写入 `match_player_assignments.display_image_url`（当轮/当次分配内固定）
+- **管理员 API**：`POST /admin/characters/{id}/images` 追加图片；`DELETE /admin/characters/{id}/images/{image_id}` 删除；列表返回 `images[]` + `image_count`
+- **迁移**：`catalog.0003_character_image`（含将旧 `image_url` 迁入图库）；`rooms.0009` 增加 `display_image_url`
 
 **近期重要变更（v7→v8）：**
 
@@ -197,9 +203,10 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 - 登录：密钥存 `localStorage`（`admin_api_key`），请求头 `X-Admin-Key`
 - 未配置 `ADMIN_API_KEY` → `403 ADMIN_DISABLED`（「Admin API is disabled」）
 - 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
-- **搜索与筛选**：中英文模糊搜索；勾选「无图片」（无 `image_url` 或仍为种子 `/characters/one_piece/` 路径）、「未启用随机分配」（`is_active=false`）
-- **编辑 UX**：新建/编辑人物在 **Modal 弹窗**中完成（Esc / 遮罩关闭）；图片仍在卡片上拖放上传
-- 图片：拖到人物卡片或创建表单上传；`POST /admin/upload-image` → `media/characters/{theme_slug}/`；`image_url` **选填**（`catalog.0002`）
+- **搜索与筛选**：中英文模糊搜索；勾选「无图片」（图库无有效图且无有效 `image_url`）、「未启用随机分配」（`is_active=false`）
+- **编辑 UX**：新建/编辑人物在 **Modal 弹窗**中完成（Esc / 遮罩关闭）
+- **多图管理**：人物卡片显示封面 + 缩略图网格 + 数量角标；拖放/「添加图片」**追加**不覆盖；每张可单独删除
+- 图片存储：`POST /admin/characters/{id}/images` → `media/characters/{theme_slug}/`；`Character.image_url` 保留为封面（最新一张，兼容旧逻辑）
 - **CSV**：导出 `中文名,英文名`；导入为**增量**（仅新增行，不删不改已有）；`POST /admin/themes/{id}/characters/import`
 - 上传成功有绿色提示；列表即时刷新头像（勿依赖整页刷新）
 - 后端：`catalog/admin_views.py`、`admin_serializers.py`、`permissions.py`
@@ -371,14 +378,15 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 
 - `game_modes`：slug=`trait_guess`
 - `themes`：slug=`one_piece`
-- `characters`：name_zh, name_en, image_url（**可空**，默认 `""`）, is_active
+- `characters`：name_zh, name_en, image_url（封面/兼容，可空）, is_active
+- `character_images`：character_id, image_url, sort_order, created_at（**多图图库**）
 
 ### 7.2 房间与对局（`rooms`）
 
 - `rooms`：room_code(6), game_type, settings(JSON), status, current_match
 - `players`：token, seat_index(0-2), language, is_host, is_connected
 - `matches`：settings_snapshot, result(JSON), match_number
-- `match_player_assignments`：player ↔ character
+- `match_player_assignments`：player ↔ character；`display_image_url` 为当次分配随机选中的肖像
 
 ### 7.3 回合数据
 
@@ -462,7 +470,9 @@ python manage.py seed_one_piece
 | GET/POST | `/admin/themes/{id}/characters` | 人物字段 | 人物列表/新建 |
 | POST | `/admin/themes/{id}/characters/import` | `{characters:[{name_zh,name_en}]}` | 批量增量导入 |
 | PATCH/DELETE | `/admin/characters/{id}` | - | 更新/删除人物 |
-| POST | `/admin/upload-image` | `multipart: file, theme_slug` | 上传图片 |
+| POST | `/admin/characters/{id}/images` | `multipart: file` | 为人物**追加**一张图片 |
+| DELETE | `/admin/characters/{id}/images/{image_id}` | - | 删除人物某张图片 |
+| POST | `/admin/upload-image` | `multipart: file, theme_slug` | 仅上传文件返回 URL（遗留） |
 
 ### 8.4 `GET /matches/current` 响应要点
 
@@ -624,6 +634,7 @@ python manage.py seed_one_piece
 
 - 共享组件：`frontend/src/components/CharacterPortrait.tsx`（`CharacterCard`、管理员页共用）
 - 圆角矩形 **aspect-ratio 5:7**（海贼王卡牌比例），`object-cover object-center`；游戏 `CharacterCard` 内 `flex justify-center` 居中
+- **多图随机**：后端分配时 `pick_character_image()` 从 `character_images` 随机一张写入 `display_image_url`；API 返回的 `character.image_url` 即为当次展示图（每轮重新分配会换新图）
 - **悬浮放大**：有图片时鼠标悬停显示更大预览（默认 `hoverPreview=true`）；`cursor-zoom-in`
 - `image_url` 有值时显示图片（`resolveMediaUrl`）；加载失败回退色块 + 名字前两字
 - 管理员上传后 `imageUrl` 变化须重置 `failed` 状态（已实现 `useEffect`）
@@ -902,3 +913,4 @@ DEPLOY_RAILWAY.md
 | 管理员编辑弹窗 | 新建/编辑 Modal；`components/ui.tsx` `Modal` |
 | 肖像悬浮放大 | `CharacterPortrait` hover 预览；游戏卡内居中 |
 | 退出游戏跳回房间 | WS 卸载后孤儿重连 + 异步 navigate | `useRoomWebSocket` 清理；`mountedRef` |
+| 人物多图 | `character_images` + 分配时随机 `display_image_url` | 管理员追加/删除图片 API |

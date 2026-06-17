@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import Character, GameMode, Theme
+from .models import Character, CharacterImage, GameMode, Theme
+
+
+class AdminCharacterImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CharacterImage
+        fields = ["id", "image_url", "sort_order"]
 
 
 class AdminThemeSerializer(serializers.ModelSerializer):
@@ -38,9 +44,15 @@ class AdminThemeWriteSerializer(serializers.ModelSerializer):
 
 
 class AdminCharacterSerializer(serializers.ModelSerializer):
+    images = AdminCharacterImageSerializer(many=True, read_only=True)
+    image_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Character
-        fields = ["id", "name_zh", "name_en", "image_url", "is_active"]
+        fields = ["id", "name_zh", "name_en", "image_url", "images", "image_count", "is_active"]
+
+    def get_image_count(self, obj):
+        return obj.images.count()
 
 
 class AdminCharacterWriteSerializer(serializers.ModelSerializer):

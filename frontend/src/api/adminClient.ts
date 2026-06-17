@@ -11,11 +11,19 @@ export interface AdminTheme {
   character_count: number;
 }
 
+export interface AdminCharacterImage {
+  id: number;
+  image_url: string;
+  sort_order: number;
+}
+
 export interface AdminCharacter {
   id: number;
   name_zh: string;
   name_en: string;
   image_url: string;
+  images: AdminCharacterImage[];
+  image_count: number;
   is_active: boolean;
 }
 
@@ -141,4 +149,18 @@ export const adminApi = {
       body: form,
     });
   },
+
+  addCharacterImage: (characterId: number, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return adminFetch<AdminCharacter>(`/admin/characters/${characterId}/images`, {
+      method: 'POST',
+      body: form,
+    });
+  },
+
+  deleteCharacterImage: (characterId: number, imageId: number) =>
+    adminFetch<AdminCharacter>(`/admin/characters/${characterId}/images/${imageId}`, {
+      method: 'DELETE',
+    }),
 };

@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from apps.catalog.models import Character, GameMode, Theme
+from apps.catalog.models import Character, CharacterImage, GameMode, Theme
 
 ONE_PIECE_CHARACTERS = [
     ("路飞", "Luffy", "luffy"),
@@ -72,8 +72,14 @@ class Command(BaseCommand):
                 },
             )
             if was_created:
-                character.image_url = f"/characters/one_piece/{slug}.svg"
+                image_url = f"/characters/one_piece/{slug}.svg"
+                character.image_url = image_url
                 character.save(update_fields=["image_url"])
+                CharacterImage.objects.get_or_create(
+                    character=character,
+                    image_url=image_url,
+                    defaults={"sort_order": 0},
+                )
                 created += 1
         self.stdout.write(
             self.style.SUCCESS(

@@ -1,6 +1,7 @@
 from django.db import models, transaction
 from django.utils import timezone
 
+from apps.catalog.images import assignment_display_image_url, pick_character_image
 from apps.catalog.models import Character
 from apps.core.exceptions import GameAPIException
 from apps.games.base import GameEngine
@@ -41,7 +42,10 @@ class CharacterAssigner:
             MatchPlayerAssignment.objects.update_or_create(
                 match=match,
                 player=player,
-                defaults={"character": character},
+                defaults={
+                    "character": character,
+                    "display_image_url": pick_character_image(character),
+                },
             )
 
     @staticmethod
@@ -67,7 +71,8 @@ class CharacterAssigner:
                 500,
             )
         assignment.character = candidates[0]
-        assignment.save(update_fields=["character"])
+        assignment.display_image_url = pick_character_image(candidates[0])
+        assignment.save(update_fields=["character", "display_image_url"])
         return assignment.character
 
 
@@ -125,29 +130,40 @@ class ScoreCalculator:
 
 class MatchResultBuilder:
     @staticmethod
-    def _character_payload(char: Character) -> dict:
+    def _character_payload(char: Character, image_url: str | None = None) -> dict:
         return {
             "id": char.id,
             "name_zh": char.name_zh,
             "name_en": char.name_en,
-            "image_url": char.image_url,
+            "image_url": image_url if image_url is not None else (char.image_url or ""),
         }
+
+    @staticmethod
+    def _assignment_character_payload(assignment: MatchPlayerAssignment) -> dict:
+        return MatchResultBuilder._character_payload(
+            assignment.character,
+            assignment_display_image_url(assignment),
+        )
 
     @staticmethod
     def _fallback_players_snapshot(match: Match, players: list[Player]) -> list[dict]:
         assignments = {
-            a.player_id: a.character
+            a.player_id: a
             for a in match.assignments.select_related("character")
         }
         snapshot = []
         for player in players:
-            char = assignments.get(player.id)
+            assignment = assignments.get(player.id)
             snapshot.append(
                 {
                     "player_id": player.id,
                     "display_name": player.display_name,
                     "seat_index": player.seat_index,
-                    "character": MatchResultBuilder._character_payload(char) if char else None,
+                    "character": (
+                        MatchResultBuilder._assignment_character_payload(assignment)
+                        if assignment
+                        else None
+                    ),
                 }
             )
         return snapshot
@@ -242,7 +258,7 @@ class MatchResultBuilder:
         room = match.room
         players = list(room.players.order_by("seat_index"))
         assignments = {
-            a.player_id: a.character for a in match.assignments.select_related("character")
+            a.player_id: a for a in match.assignments.select_related("character")
         }
 
         rounds_data = []
@@ -251,7 +267,7 @@ class MatchResultBuilder:
 
         player_results = []
         for p in players:
-            char = assignments.get(p.id)
+            assignment = assignments.get(p.id)
             total_score = 0
             if room.game_type == GameType.COMPETITIVE:
                 ms = MatchScore.objects.filter(match=match, player=p).first()
@@ -260,14 +276,11 @@ class MatchResultBuilder:
                 {
                     "player_id": p.id,
                     "display_name": p.display_name,
-                    "character": {
-                        "id": char.id,
-                        "name_zh": char.name_zh,
-                        "name_en": char.name_en,
-                        "image_url": char.image_url,
-                    }
-                    if char
-                    else None,
+                    "character": (
+                        MatchResultBuilder._assignment_character_payload(assignment)
+                        if assignment
+                        else None
+                    ),
                     "total_score": total_score,
                 }
             )
@@ -458,27 +471,25 @@ class TraitGuessEngine(GameEngine):
     def get_state(self, match: Match, player: Player):
         room = match.room
         current_round = self._get_current_round(match)
-        assignments = {
-            a.player_id: a.character for a in match.assignments.select_related("character")
+        assignment_map = {
+            a.player_id: a for a in match.assignments.select_related("character")
         }
+        assignments = {player_id: a.character for player_id, a in assignment_map.items()}
 
         others = []
         for p in room.players.exclude(id=player.id).order_by("seat_index"):
-            char = assignments.get(p.id)
+            assignment = assignment_map.get(p.id)
             others.append(
                 {
                     "player_id": p.id,
                     "display_name": p.display_name,
                     "seat_index": p.seat_index,
                     "is_connected": p.is_connected,
-                    "character": {
-                        "id": char.id,
-                        "name_zh": char.name_zh,
-                        "name_en": char.name_en,
-                        "image_url": char.image_url,
-                    }
-                    if char
-                    else None,
+                    "character": (
+                        MatchResultBuilder._assignment_character_payload(assignment)
+                        if assignment
+                        else None
+                    ),
                 }
             )
 
@@ -499,14 +510,9 @@ class TraitGuessEngine(GameEngine):
                 player=player, verdict=GuessVerdict.CORRECT
             ).first()
             if correct_guess:
-                char = assignments.get(player.id)
-                if char:
-                    self_character = {
-                        "id": char.id,
-                        "name_zh": char.name_zh,
-                        "name_en": char.name_en,
-                        "image_url": char.image_url,
-                    }
+                assignment = assignment_map.get(player.id)
+                if assignment:
+                    self_character = MatchResultBuilder._assignment_character_payload(assignment)
 
         scores = {}
         if room.game_type == GameType.COMPETITIVE:
@@ -860,18 +866,12 @@ class TraitGuessEngine(GameEngine):
     def _snapshot_round_assignments(self, round_obj: Round):
         snapshot = []
         for assignment in round_obj.match.assignments.select_related("player", "character"):
-            char = assignment.character
             snapshot.append(
                 {
                     "player_id": assignment.player_id,
                     "display_name": assignment.player.display_name,
                     "seat_index": assignment.player.seat_index,
-                    "character": {
-                        "id": char.id,
-                        "name_zh": char.name_zh,
-                        "name_en": char.name_en,
-                        "image_url": char.image_url,
-                    },
+                    "character": MatchResultBuilder._assignment_character_payload(assignment),
                 }
             )
         snapshot.sort(key=lambda item: item["seat_index"])
