@@ -269,6 +269,20 @@ class AdminCharacterImageFromUrlView(APIView):
             sort_order=character.images.count(),
         )
 
+    def _sniff_image_content_type(self, data: bytes) -> str | None:
+        if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
+            return "image/jpeg"
+        if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        if len(data) >= 6 and data[:6] in (b"GIF87a", b"GIF89a"):
+            return "image/gif"
+        if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return "image/webp"
+        stripped = data.lstrip()
+        if stripped.startswith(b"<svg") or stripped.startswith(b"<?xml"):
+            return "image/svg+xml"
+        return None
+
     def _fetch_image(self, url: str) -> tuple[bytes, str]:
         parsed = urlparse(url.strip())
         if parsed.scheme not in ("http", "https"):
@@ -289,7 +303,11 @@ class AdminCharacterImageFromUrlView(APIView):
         if len(data) > self.MAX_BYTES:
             raise GameAPIException("INVALID_FILE", "Image too large", 400)
         if not content_type.startswith("image/"):
-            raise GameAPIException("INVALID_FILE", "URL did not return an image", 400)
+            sniffed = self._sniff_image_content_type(data)
+            if sniffed:
+                content_type = sniffed
+            else:
+                raise GameAPIException("INVALID_FILE", "URL did not return an image", 400)
         return data, content_type
 
     def _extension_for(self, url: str, content_type: str) -> str:

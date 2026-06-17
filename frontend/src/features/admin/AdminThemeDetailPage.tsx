@@ -203,7 +203,14 @@ async function resolveDroppedImages(
     }
   }
 
-  return { files: mergeImageFiles(files), remoteUrls: Array.from(new Set(remoteUrls)) };
+  const mergedFiles = mergeImageFiles(files);
+  // Drags from chat/browsers often include both a real File and a page/thumbnail URL.
+  // Prefer the file and skip URL import to avoid false errors after a successful upload.
+  if (mergedFiles.length > 0) {
+    return { files: mergedFiles, remoteUrls: [] };
+  }
+
+  return { files: mergedFiles, remoteUrls: Array.from(new Set(remoteUrls)) };
 }
 
 function PendingImagePreview({ file, alt }: { file: File; alt: string }) {
@@ -421,14 +428,28 @@ export function AdminThemeDetailPage() {
     setImportMessage('');
     try {
       let updated = null as Awaited<ReturnType<typeof uploadImageForCharacter>> | null;
+      let successCount = 0;
+      const failures: string[] = [];
+
       for (const file of files) {
-        updated = await uploadImageForCharacter(file, characterId);
+        try {
+          updated = await uploadImageForCharacter(file, characterId);
+          successCount += 1;
+        } catch (e) {
+          failures.push((e as Error).message);
+        }
       }
       for (const url of remoteUrls) {
-        updated = await adminApi.addCharacterImageFromUrl(characterId, url);
+        try {
+          updated = await adminApi.addCharacterImageFromUrl(characterId, url);
+          successCount += 1;
+        } catch (e) {
+          failures.push((e as Error).message);
+        }
       }
-      if (!updated) {
-        setError(t('adminDropImageFetchFailed'));
+
+      if (!updated || successCount === 0) {
+        setError(failures[0] || t('adminDropImageFetchFailed'));
         return;
       }
 
@@ -446,7 +467,7 @@ export function AdminThemeDetailPage() {
         window.setTimeout(() => setHighlightImageId(null), 2500);
       }
       if (displayName) {
-        const added = files.length + remoteUrls.length;
+        const added = successCount;
         setUploadMessage(
           added > 1
             ? t('adminUploadAddedMany', { name: displayName, added, count: imageCount })
