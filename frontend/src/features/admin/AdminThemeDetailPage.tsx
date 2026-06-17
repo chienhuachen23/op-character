@@ -7,8 +7,8 @@ import {
   type AdminCharacter,
   type AdminTheme,
 } from '../../api/adminClient';
-import { resolveMediaUrl } from '../../api/client';
 import { Card, Button, Input } from '../../components/ui';
+import { CharacterPortrait } from '../../components/CharacterPortrait';
 import { characterName } from '../../i18n';
 import {
   exportCharacterTemplateCsv,
@@ -41,37 +41,9 @@ function PendingImagePreview({ file, alt }: { file: File; alt: string }) {
   if (!src) return null;
 
   return (
-    <img
-      src={src}
-      alt={alt}
-      className="w-20 h-20 rounded-full object-cover border-2 border-straw/40 bg-ocean"
-    />
-  );
-}
-
-function CharacterImage({ imageUrl, name }: { imageUrl: string; name: string }) {
-  const [failed, setFailed] = useState(false);
-  const src = resolveMediaUrl(imageUrl);
-
-  if (!src || failed) {
-    const hue = (name.charCodeAt(0) * 47) % 360;
-    return (
-      <div
-        className="w-20 h-20 rounded-full flex items-center justify-center text-xl font-bold text-white border-2 border-straw/40"
-        style={{ background: `linear-gradient(135deg, hsl(${hue}, 60%, 40%), hsl(${hue}, 70%, 25%))` }}
-      >
-        {name.slice(0, 2)}
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={name}
-      className="w-20 h-20 rounded-full object-cover border-2 border-straw/40 bg-ocean"
-      onError={() => setFailed(true)}
-    />
+    <div className="w-20 aspect-[5/7] rounded-xl overflow-hidden border-2 border-straw/40 bg-ocean">
+      <img src={src} alt={alt} className="w-full h-full object-cover" />
+    </div>
   );
 }
 
@@ -385,9 +357,12 @@ export function AdminThemeDetailPage() {
                   alt={form.name_zh || form.name_en || 'preview'}
                 />
               ) : (
-                <div className="w-20 h-20 rounded-full flex items-center justify-center text-sm text-parchment/70 border-2 border-dashed border-straw/40 bg-ocean/40 px-2 text-center">
-                  {t('adminCreateDropImageHint')}
-                </div>
+                <CharacterPortrait
+                  name={form.name_zh || form.name_en || 'new'}
+                  size="md"
+                  dashed
+                  hint={t('adminCreateDropImageHint')}
+                />
               )}
               {pendingCreateImage && (
                 <button
@@ -499,7 +474,7 @@ export function AdminThemeDetailPage() {
                 </div>
               )}
               <div className="flex flex-col items-center text-center">
-                <CharacterImage imageUrl={character.image_url} name={displayName} />
+                <CharacterPortrait imageUrl={character.image_url} name={displayName} size="md" />
                 <p className="font-bold mt-3">{character.name_zh}</p>
                 <p className="text-sm text-parchment/70">{character.name_en}</p>
                 {!character.is_active && (
