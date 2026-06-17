@@ -63,16 +63,17 @@ class Command(BaseCommand):
         )
         created = 0
         for name_zh, name_en, slug in ONE_PIECE_CHARACTERS:
-            _, was_created = Character.objects.update_or_create(
+            character, was_created = Character.objects.update_or_create(
                 theme=theme,
                 name_en=name_en,
                 defaults={
                     "name_zh": name_zh,
-                    "image_url": f"/characters/one_piece/{slug}.svg",
                     "is_active": True,
                 },
             )
             if was_created:
+                character.image_url = f"/characters/one_piece/{slug}.svg"
+                character.save(update_fields=["image_url"])
                 created += 1
         self.stdout.write(
             self.style.SUCCESS(
