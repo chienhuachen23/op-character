@@ -52,6 +52,7 @@ export function AdminCharacterGalleryModal({
                 imageUrl={image.image_url}
                 name={displayName}
                 size="md"
+                previewStrategy="fixed"
                 className={clsx(highlightImageId === image.id && 'ring-2 ring-green-400')}
               />
               <button
