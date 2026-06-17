@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-16（v4）
+> 最后更新：2026-06-16（v5）
 
 ---
 
@@ -16,7 +16,16 @@
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
 
-**近期重要变更（v3→v4）：**
+**近期重要变更（v4→v5）：**
+
+- **管理员 CMS 增强**：人物卡片拖放/点击上传图片；CSV **导出/导入**（仅中英文名，增量导入）；新建人物图片选填、创建表单可拖图
+- **人物肖像 UI**：`CharacterPortrait` 组件，圆角矩形 **5:7** 卡牌比例（管理员 + 游戏 + 复盘）；`frontend/public/favicon.png` + 站点标题
+- **对局人物重选**：活跃期内可申请为他人的角色重选，**第三位玩家**确认后随机换新人物；重置目标玩家当轮猜测；`character_reroll` 状态字段
+- **SPA / 路由修复**：Django 内置后台迁至 `/django-admin/`；`SPAFallbackMiddleware` 优先服务 `/admin`、`/admin/*`、`/room/*`（刷新不再进 Django 登录页）
+- **Railway 数据持久化**：`seed_one_piece` **仅新建**角色时写默认 `image_url`，部署不再覆盖管理员上传的 `/media/` 路径；**必须**挂 Volume `/app/data` 否则 DB/图片/新增人物每次部署丢失
+- **管理员上传 UX**：上传成功绿色提示 + 乐观更新列表（`CharacterPortrait` 在 `imageUrl` 变化时重置 `failed`）
+
+**近期重要变更（v3→v4，仍有效）：**
 
 - 再来一局：全员同意后**所有玩家**自动跳转 `/play`（`ResultsPoster.fetchData` + 后端 `_replay_response_state`）
 - 游戏内增加「退出游戏」按钮（回首页，不清 token）
@@ -76,8 +85,8 @@ op-character/
         ├── api/client.ts, adminClient.ts
         ├── features/
         │   ├── home/ lobby/ game/ results/
-        │   └── admin/        # ★ 内容管理 CMS
-        └── components/CharacterCard.tsx
+        │   └── admin/        # ★ 内容管理 CMS（含 characterCsv.ts）
+        └── components/CharacterCard.tsx, CharacterPortrait.tsx
 ```
 
 ---
@@ -173,10 +182,12 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 - 登录：密钥存 `localStorage`（`admin_api_key`），请求头 `X-Admin-Key`
 - 未配置 `ADMIN_API_KEY` → `403 ADMIN_DISABLED`（「Admin API is disabled」）
 - 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
-- 图片：上传到 `media/characters/{theme_slug}/`，URL 写入 `characters.image_url`
-- 后端：`catalog/admin_views.py`、`catalog/permissions.py`、`catalog/admin_serializers.py`
-- 前端：`api/adminClient.ts`、`features/admin/*`
-- **勿与** Django Admin（`/admin/` 在 Django 侧，React 路由 `/admin` 不同）混淆
+- 图片：拖到人物卡片或创建表单上传；`POST /admin/upload-image` → `media/characters/{theme_slug}/`；`image_url` **选填**（`catalog.0002`）
+- **CSV**：导出 `中文名,英文名`；导入为**增量**（仅新增行，不删不改已有）；`POST /admin/themes/{id}/characters/import`
+- 上传成功有绿色提示；列表即时刷新头像（勿依赖整页刷新）
+- 后端：`catalog/admin_views.py`、`admin_serializers.py`、`permissions.py`
+- 前端：`api/adminClient.ts`、`features/admin/*`、`features/admin/characterCsv.ts`
+- **勿与** Django 内置 Admin 混淆：其在 **`/django-admin/`**；React CMS 在 **`/admin`**
 
 ### 5.4 分享链接流程
 
@@ -220,6 +231,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 | 等待评判 | `verdict=pending` 时不可重复提交 |
 | 猜对后继续 | 仍可发提示；不可再次猜测 |
 | 放弃 | `{skip:true}`，本轮不再猜测 |
+| **人物重选** | 玩家 A 为 B 点「重选」→ 玩家 C 确认 → B 换新角色；删 B 当轮 Guess；同时仅 1 个 pending 申请 |
 
 ### 6.4 轮次结束条件
 
@@ -342,7 +354,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 
 - `game_modes`：slug=`trait_guess`
 - `themes`：slug=`one_piece`
-- `characters`：name_zh, name_en, image_url, is_active
+- `characters`：name_zh, name_en, image_url（**可空**，默认 `""`）, is_active
 
 ### 7.2 房间与对局（`rooms`）
 
@@ -361,6 +373,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 - **`author_hint_ratings`**：round + author_player + rater_player → like/dislike（每作者每轮每评价者唯一）
 - `round_scores` / `match_scores`：对抗计分
 - `replay_votes`：三人全 approved → 新 match
+- **`character_reroll_requests`**：round + target_player + requester_player + status(pending/rejected)
 
 ### 7.4 Migrations
 
@@ -371,6 +384,8 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 - `rooms.0005_backfill_guess_history`：回填空 history
 - `rooms.0006_guess_history_default`：callable default
 - `rooms.0007_round_assignments_snapshot`：Round 增加 `assignments_snapshot`
+- `rooms.0008_character_reroll_request`：`CharacterRerollRequest` 表
+- `catalog.0002_character_image_url_optional`：`characters.image_url` 可空
 
 ### 7.5 种子数据
 
@@ -379,6 +394,8 @@ python manage.py seed_one_piece
 ```
 
 34 个海贼王角色 + game_mode + theme。
+
+> **重要**：`seed_one_piece` 在 `start.sh` 每次部署都会执行，但**仅在新创建角色时**写入默认 SVG `image_url`；**不会覆盖**已有角色的管理员上传路径。无 Volume 时整个 SQLite 仍会丢失（含手动新增人物）。
 
 ---
 
@@ -408,6 +425,8 @@ python manage.py seed_one_piece
 | GET | `/matches/{id}/summary` | * | - | 终局数据 |
 | POST | `/rounds/current/hints` | ✓ | `{content}` | 发提示 |
 | POST | `/rounds/current/guesses` | ✓ | `{text}` 或 `{skip:true}` | 文本猜人物 |
+| POST | `/rounds/current/character-rerolls` | ✓ | `{target_player_id}` | 申请为他人重选人物 |
+| POST | `/rounds/current/character-rerolls/confirm` | ✓ | `{target_player_id, approved}` | 第三人确认/拒绝重选 |
 | POST | `/guesses/{id}/votes` | ✓ | `{is_correct}` | 评判他人猜测 |
 | POST | `/rounds/current/author-hint-ratings` | rating | `{author_id, rating}` | **按作者**评价提示（推荐） |
 | POST | `/hints/{id}/ratings` | rating | `{rating}` | 兼容入口（转为评 hint 作者） |
@@ -424,6 +443,7 @@ python manage.py seed_one_piece
 | GET/POST | `/admin/themes` | 创建：`{slug,name_zh,name_en,game_mode}` | 主题列表/新建 |
 | GET/PATCH | `/admin/themes/{id}` | - | 主题详情/更新 |
 | GET/POST | `/admin/themes/{id}/characters` | 人物字段 | 人物列表/新建 |
+| POST | `/admin/themes/{id}/characters/import` | `{characters:[{name_zh,name_en}]}` | 批量增量导入 |
 | PATCH/DELETE | `/admin/characters/{id}` | - | 更新/删除人物 |
 | POST | `/admin/upload-image` | `multipart: file, theme_slug` | 上传图片 |
 
@@ -470,7 +490,21 @@ python manage.py seed_one_piece
   ],
   "hint_rating_groups": [],
   "round_result": null,
+  "character_reroll": null,
   "coop": { "success_rounds": 0, "target_rounds": 3, "total_rounds": 5 }
+}
+```
+
+`character_reroll` 在活跃期有待确认重选时非 null，示例：
+
+```json
+"character_reroll": {
+  "target_player_id": 2,
+  "target_player_name": "索隆",
+  "requester_player_id": 1,
+  "requester_player_name": "路飞",
+  "confirmer_player_id": 3,
+  "status": "pending"
 }
 ```
 
@@ -546,7 +580,7 @@ python manage.py seed_one_piece
 
 **活跃期**（`phase` 非 rating/settlement/complete）：
 
-1. 三人人物卡（自己未猜对时 `?`，猜对后 reveal）
+1. 三人人物卡（自己未猜对时 `?`，猜对后 reveal）；他人卡片下可 **重选**（见 §6.3）
 2. **发送的提示**（仅 `is_own`）
 3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示
 4. **评判区**（他人 `pending` 猜测 + 投票）
@@ -569,15 +603,18 @@ python manage.py seed_one_piece
   - 全员同意后：`fetchData` / `handleReplay` 检测 `room_status===playing` → 全员跳转 `/play`
   - WebSocket `match.updated` 也会触发 `fetchData` 跳转
 
-### 10.3 人物头像
+### 10.3 人物肖像
 
+- 共享组件：`frontend/src/components/CharacterPortrait.tsx`（`CharacterCard`、管理员页共用）
+- 圆角矩形 **aspect-ratio 5:7**（海贼王卡牌比例），`object-cover`
 - `image_url` 有值时显示图片（`resolveMediaUrl`）；加载失败回退色块 + 名字前两字
-- 种子数据路径 `/characters/one_piece/*.svg` 可能 404，上传真实图片后正常
+- 管理员上传后 `imageUrl` 变化须重置 `failed` 状态（已实现 `useEffect`）
+- 种子默认路径 `/characters/one_piece/*.svg` 可能 404；管理员上传 `/media/...` 正常
 
 ### 10.4 UI 主题
 
 - 藏蓝 + 草帽黄（`ocean`, `straw`, `parchment`）
-- 人物头像：彩色圆形 + 名字前两字
+- 浏览器标签图标：`frontend/public/favicon.png`（草帽海贼团标志）；`index.html` 标题「人物共性猜谜」
 
 ---
 
@@ -589,8 +626,8 @@ python manage.py seed_one_piece
 
 | 类/模块 | 职责 |
 |---|---|
-| `CharacterAssigner` | 每轮/开局随机 3 角色，`update_or_create` 覆盖 assignment |
-| `TraitGuessEngine` | 状态机、序列化、阶段归一、轮末快照 |
+| `CharacterAssigner` | 每轮/开局随机 3 角色；`reroll_for_player` 为单人换角（排除当前三人已用） |
+| `TraitGuessEngine` | 状态机、序列化、阶段归一、轮末快照、**人物重选** |
 | `ScoreCalculator` | 对抗 settlement（猜对分 + 作者级赞踩分） |
 | `MatchResultBuilder` | 终局复盘（按轮 players + hint_authors + other_characters） |
 
@@ -614,6 +651,7 @@ python manage.py test apps.games apps.rooms
 - 猜错重试 + `guess_history`
 - 每轮人物重分配 + `assignments_snapshot`
 - rating 阶段 `round_result` / `pending_scores`
+- **人物重选**（第三人确认、猜测重置）
 - 房间 API / room full / preview（`RoomPreviewView` 需 import `PlayerSerializer`）
 
 ```bash
@@ -633,9 +671,12 @@ https://{app}.up.railway.app
   ├── /health           → Django health_view
   ├── /api/v1/*         → DRF API
   ├── /ws/*             → Channels WebSocket
-  ├── /media/*          → 上传图片（MEDIA_ROOT）
+  ├── /media/*          → 上传图片（MEDIA_ROOT = {DATA_DIR}/media）
+  ├── /django-admin/    → Django 内置后台（非日常 CMS）
   └── /*                → React SPA（Whitenoise + SPAFallbackMiddleware）
 ```
+
+- `SPAFallbackMiddleware`：`/admin`、`/admin/*`、`/room/*` 直接返回 `index.html`（避免与 Django admin 冲突）
 
 - 根目录 `Dockerfile`：多阶段构建（`npm run build` → 复制到 `/app/static/frontend`）
 - `deploy/start.sh`：**migrate → seed → `exec daphne -b 0.0.0.0 -p $PORT`**
@@ -662,6 +703,9 @@ https://{app}.up.railway.app
 | `Admin API is disabled` | 未设 `ADMIN_API_KEY` | Variables 添加后 Redeploy |
 | `invalid JSON` on `/admin/themes` | 后端 500 返回 HTML（常因 DB 未 migrate） | 确保 `start.sh` 含 migrate+seed；**勿仅依赖 preDeploy** |
 | 登录成功但列表失败 | 登录不查 DB，列表查 DB | 同上 |
+| 刷新 `/admin` 进 Django 登录页 | Django `admin/` 与 React `/admin` 冲突 | 已修：Django → `/django-admin/` + SPA fallback |
+| 部署后图片变色块 / URL 变 `.svg` | `seed` 曾覆盖 `image_url` | 已修：seed 仅新建角色写默认图；仍须 Volume |
+| 部署后新增人物消失 | 未挂 Volume，SQLite 重建 | Settings → Volumes → `/app/data` |
 
 ### 13.4 不适合的平台
 
@@ -688,7 +732,7 @@ docker-compose up --build
 | 猜测自动匹配人物名 | 人工评判，非字符串精确匹配 |
 | 阶段超时自动推进 | 未实现 |
 | 房主 advance 阶段 | 已移除 |
-| Django Admin (`/admin/` Django) | 保留；日常用 React `/admin` CMS |
+| Django Admin (`/django-admin/`) | 保留；日常用 React `/admin` CMS |
 | 音效 | 未实现 |
 
 ---
@@ -716,6 +760,8 @@ docker-compose up --build
 | Railway `VOLUME` in Dockerfile | 构建失败 | 用 Railway Dashboard 挂 Volume |
 | 管理员 `invalid JSON` | DB 500 HTML | `start.sh` migrate+seed；检查 `/api/v1/game-modes` 是否 JSON |
 | 管理员 `ADMIN_DISABLED` | 无 `ADMIN_API_KEY` | Railway Variables 配置 |
+| 管理员上传成功但头像不变 | `CharacterPortrait` `failed` 未重置 | 已修；硬刷新可验证 |
+| `makemigrations` 提示 rooms 索引漂移 | 索引名与 migration 不一致 | 模型 `Index` 须带 `name="character_r_round_i_6f0a2a_idx"` |
 
 ---
 
@@ -764,6 +810,9 @@ docker-compose up --build
 - 分享链接加入须处理 **token 房间不匹配**
 - 再来一局全员同意后须 **所有客户端** 跳转 `/play`（WS + API 双路径）
 - 生产环境 **`ADMIN_API_KEY` 未设置则管理 API 关闭**
+- React CMS 路由 **`/admin`** 不可再被 Django `admin/` 占用（用 `/django-admin/`）
+- **`seed_one_piece` 不得覆盖已有角色的 `image_url`**
+- Railway 生产**必须** Volume `/app/data` 持久化 DB + media
 
 ---
 
@@ -785,6 +834,10 @@ frontend/src/features/admin/AdminThemesPage.tsx
 frontend/src/features/admin/AdminThemeDetailPage.tsx
 frontend/src/api/client.ts
 frontend/src/api/adminClient.ts
+backend/config/urls.py                        # django-admin 路径 ★
+frontend/src/components/CharacterPortrait.tsx
+frontend/src/features/admin/characterCsv.ts
+frontend/public/favicon.png
 frontend/src/i18n/index.ts
 DEPLOY_RAILWAY.md
 ```
@@ -818,3 +871,11 @@ DEPLOY_RAILWAY.md
 | GitHub | `chienhuachen23/op-character` |
 | Railway 502 修复 | 去掉 Nginx/Dockerfile VOLUME；`exec daphne`；Target Port 8080 |
 | Railway 管理 API | 容器内 migrate+seed；禁用仅 preDeploy 写库 |
+| 管理员拖放上传 | 人物卡片拖放/点击上传图片 |
+| 管理员 CSV | 导出/增量导入人物（中英文名）；创建时图片选填 |
+| Favicon | `favicon.png` 草帽标志；站点标题 |
+| SPA 路由修复 | Django Admin → `/django-admin/`；`/admin` 刷新不进 Django 登录 |
+| 卡牌比例肖像 | `CharacterPortrait` 5:7 圆角矩形（游戏+管理员） |
+| 对局人物重选 | 第三人确认后换角；`character_reroll_requests`；API + GameBoard UI |
+| seed 不覆盖图片 | `seed_one_piece` 仅新建角色写默认 `image_url` |
+| 管理员上传 UX | 成功提示 + 乐观更新头像；`CharacterPortrait` 重置 `failed` |

@@ -62,6 +62,7 @@ export function AdminThemeDetailPage() {
   const [dragOverCreateForm, setDragOverCreateForm] = useState(false);
   const [pendingCreateImage, setPendingCreateImage] = useState<File | null>(null);
   const [importMessage, setImportMessage] = useState('');
+  const [uploadMessage, setUploadMessage] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name_zh: '',
@@ -167,31 +168,40 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const uploadImageForCharacter = async (file: File, characterId: number) => {
-    if (!theme) return;
+  const uploadImageForCharacter = async (file: File, characterId: number): Promise<string> => {
+    if (!theme) {
+      throw new Error('Theme not loaded');
+    }
     if (!isImageFile(file)) {
-      setError(t('adminInvalidImageFile'));
-      return;
+      throw new Error(t('adminInvalidImageFile'));
     }
-    setUploadTargetId(characterId);
-    try {
-      const { url } = await adminApi.uploadImage(file, theme.slug);
-      await adminApi.updateCharacter(characterId, { image_url: url });
-    } finally {
-      setUploadTargetId(null);
-    }
+    const { url } = await adminApi.uploadImage(file, theme.slug);
+    await adminApi.updateCharacter(characterId, { image_url: url });
+    return url;
   };
 
   const handleUpload = async (file: File, characterId: number) => {
     if (!theme) return;
+    const character = characters.find((item) => item.id === characterId);
     setLoading(true);
+    setUploadTargetId(characterId);
     setError('');
+    setUploadMessage('');
+    setImportMessage('');
     try {
-      await uploadImageForCharacter(file, characterId);
+      const url = await uploadImageForCharacter(file, characterId);
+      const displayName = character ? characterName(character, lang) : '';
+      setCharacters((prev) =>
+        prev.map((item) => (item.id === characterId ? { ...item, image_url: url } : item))
+      );
+      if (displayName) {
+        setUploadMessage(t('adminUploadSuccess', { name: displayName }));
+      }
       await loadData();
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      setUploadTargetId(null);
       setLoading(false);
     }
   };
@@ -230,6 +240,7 @@ export function AdminThemeDetailPage() {
     }
     exportCharactersCsv(characters, theme.slug);
     setImportMessage('');
+    setUploadMessage('');
   };
 
   const handleDownloadTemplate = () => {
@@ -241,6 +252,7 @@ export function AdminThemeDetailPage() {
     setLoading(true);
     setError('');
     setImportMessage('');
+    setUploadMessage('');
     try {
       const text = await file.text();
       const rows = parseCharacterCsv(text);
@@ -409,6 +421,7 @@ export function AdminThemeDetailPage() {
       )}
 
       {error && <p className="text-red-400 mb-4">{error}</p>}
+      {uploadMessage && <p className="text-green-300 mb-4">{uploadMessage}</p>}
       {importMessage && <p className="text-green-300 mb-4">{importMessage}</p>}
 
       <input
@@ -446,6 +459,7 @@ export function AdminThemeDetailPage() {
           const displayName = characterName(character, lang);
           const isDragOver = dragOverCharacterId === character.id;
           const isUploading = loading && uploadTargetId === character.id;
+          const portraitKey = `${character.id}:${character.image_url}`;
           return (
             <div
               key={character.id}
@@ -474,7 +488,12 @@ export function AdminThemeDetailPage() {
                 </div>
               )}
               <div className="flex flex-col items-center text-center">
-                <CharacterPortrait imageUrl={character.image_url} name={displayName} size="md" />
+                <CharacterPortrait
+                  key={portraitKey}
+                  imageUrl={character.image_url}
+                  name={displayName}
+                  size="md"
+                />
                 <p className="font-bold mt-3">{character.name_zh}</p>
                 <p className="text-sm text-parchment/70">{character.name_en}</p>
                 {!character.is_active && (

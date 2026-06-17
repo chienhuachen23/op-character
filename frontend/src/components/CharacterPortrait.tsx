@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { resolveMediaUrl } from '../api/client';
 
@@ -37,6 +37,10 @@ export function CharacterPortrait({
   const src = imageUrl ? resolveMediaUrl(imageUrl) : '';
   const hue = ((name.charCodeAt(0) || 0) * 47) % 360;
   const showImage = Boolean(src && !failed);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [imageUrl]);
 
   return (
     <div
