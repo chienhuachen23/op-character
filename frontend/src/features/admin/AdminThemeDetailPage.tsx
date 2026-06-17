@@ -33,7 +33,82 @@ function collectImageFiles(files: FileList | File[]): File[] {
 
 function acceptsFileDrop(e: DragEvent): boolean {
   const types = e.dataTransfer.types;
-  return types.includes('Files') || types.some((type) => type.startsWith('image/'));
+  return (
+    types.includes('Files') ||
+    types.some((type) => type.startsWith('image/')) ||
+    types.includes('text/uri-list') ||
+    types.includes('text/html') ||
+    types.includes('text/plain')
+  );
+}
+
+function parseDroppedImageUrls(dt: DataTransfer): string[] {
+  const urls: string[] = [];
+  const uriList = dt.getData('text/uri-list');
+  if (uriList) {
+    for (const line of uriList.split('\n')) {
+      const value = line.trim();
+      if (value && !value.startsWith('#')) urls.push(value);
+    }
+  }
+
+  const textPlain = dt.getData('text/plain').trim();
+  if (textPlain && /^https?:\/\//i.test(textPlain)) {
+    urls.push(textPlain);
+  }
+
+  const html = dt.getData('text/html');
+  if (html) {
+    const matches = html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi);
+    for (const match of matches) {
+      const value = (match[1] || '').trim();
+      if (value) urls.push(value);
+    }
+  }
+
+  return Array.from(new Set(urls));
+}
+
+function extFromMimeType(type: string): string {
+  if (type === 'image/jpeg') return '.jpg';
+  if (type === 'image/png') return '.png';
+  if (type === 'image/gif') return '.gif';
+  if (type === 'image/webp') return '.webp';
+  if (type === 'image/svg+xml') return '.svg';
+  return '';
+}
+
+async function imageFileFromUrl(url: string, index: number): Promise<File | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) return null;
+    const fromUrl = (() => {
+      try {
+        const pathname = new URL(url).pathname;
+        const dot = pathname.lastIndexOf('.');
+        if (dot >= 0) return pathname.slice(dot).toLowerCase();
+      } catch {
+        return '';
+      }
+      return '';
+    })();
+    const ext = IMAGE_EXTENSIONS.has(fromUrl) ? fromUrl : extFromMimeType(blob.type);
+    const fileName = `dropped-image-${Date.now()}-${index}${ext}`;
+    const file = new File([blob], fileName, { type: blob.type });
+    return isImageFile(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectDroppedImages(dt: DataTransfer): Promise<File[]> {
+  const localFiles = collectImageFiles(dt.files);
+  const urlFiles = await Promise.all(
+    parseDroppedImageUrls(dt).map((url, index) => imageFileFromUrl(url, index))
+  );
+  return [...localFiles, ...urlFiles.filter((item): item is File => !!item)];
 }
 
 function PendingImagePreview({ file, alt }: { file: File; alt: string }) {
@@ -267,10 +342,11 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const handleCreateFormDrop = (e: DragEvent<HTMLDivElement>) => {
+  const handleCreateFormDrop = async (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOverCreateForm(false);
-    const file = Array.from(e.dataTransfer.files).find(isImageFile);
+    const files = await collectDroppedImages(e.dataTransfer);
+    const file = files[0];
     if (!file) {
       setError(t('adminInvalidImageFile'));
       return;
@@ -335,12 +411,12 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const handleCardDrop = (e: DragEvent<HTMLDivElement>, characterId: number) => {
+  const handleCardDrop = async (e: DragEvent<HTMLDivElement>, characterId: number) => {
     e.preventDefault();
     setDragOverCharacterId(null);
     if (loading) return;
 
-    const imageFiles = collectImageFiles(e.dataTransfer.files);
+    const imageFiles = await collectDroppedImages(e.dataTransfer);
     if (!imageFiles.length) {
       setError(t('adminInvalidImageFile'));
       return;
