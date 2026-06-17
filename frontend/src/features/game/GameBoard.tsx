@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -208,17 +208,27 @@ export function GameBoard() {
   const [guessText, setGuessText] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const mountedRef = useRef(true);
 
   const lang = i18n.language;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const fetchState = useCallback(async () => {
     try {
       const data = await api.getCurrentMatch();
+      if (!mountedRef.current) return;
       setState(data);
       if (data.room_status === 'replay_pending' || data.match_status === 'finished') {
         navigate(`/room/${code}/results`);
       }
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     }
   }, [code, navigate]);
@@ -363,7 +373,7 @@ export function GameBoard() {
               {t('successRounds')}: {state.coop.success_rounds} / {state.coop.target_rounds}
             </div>
           )}
-          <Button variant="ghost" onClick={() => navigate('/')}>
+          <Button variant="ghost" onClick={() => navigate('/', { replace: true })}>
             {t('exitGame')}
           </Button>
         </div>

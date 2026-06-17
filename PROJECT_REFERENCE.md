@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-17（v7）
+> 最后更新：2026-06-17（v8）
 
 ---
 
@@ -15,6 +15,11 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v7→v8）：**
+
+- **退出游戏跳回房间修复**：`useRoomWebSocket` 卸载时取消重连定时器并清空 `wsRef`，避免大厅/游戏页卸载后孤儿 WS 触发 `navigate`；异步 `fetch*` 增加 `mountedRef` 守卫；大厅仅在当前路径为 `/room/:code` 时自动进 `/play`
+- **退出 UX**：`navigate('/', { replace: true })` 避免浏览器后退又回到对局
 
 **近期重要变更（v6→v7）：**
 
@@ -571,7 +576,7 @@ python manage.py seed_one_piece
 | `game.over` | 游戏结束 |
 
 - Hook：`frontend/src/ws/useRoomWebSocket.ts`
-- 断线 2s 自动重连
+- 断线 2s 自动重连（**仅组件仍挂载时**；卸载须取消重连，避免退出后跳回房间）
 - 本地：`USE_INMEMORY_CHANNEL=true`（单进程 daphne 即可）
 
 ---
@@ -582,7 +587,7 @@ python manage.py seed_one_piece
 |---|---|---|
 | `/` | `HomePage` | 创建/加入、settings；底部管理员入口 |
 | `/room/:code` | `LobbyPage` | 大厅 / 分享链接加入 |
-| `/room/:code/play` | `GameBoard` | 游戏主界面；右上角「退出游戏」 |
+| `/room/:code/play` | `GameBoard` | 游戏主界面；右上角「退出游戏」→ 首页（**保留 token**，可凭分享链接再进同房间） |
 | `/room/:code/results` | `ResultsPoster` | 终局复盘 + 再来一局 |
 | `/admin` | `AdminLoginPage` | 管理员登录 |
 | `/admin/themes` | `AdminThemesPage` | 主题列表 |
@@ -767,6 +772,7 @@ docker-compose up --build
 | `/preview` 500 | `views.py` 缺 `PlayerSerializer` import | 已修复，重启 daphne |
 | `guess_history` NOT NULL | 创建 Guess 未写 history | 已修复；`migrate` 至 0006+ |
 | 终局页空白 | 旧 `match.result` 格式与前端不兼容 | `get_summary` 已改为 DB 重建；硬刷新前端 |
+| 退出游戏后又跳回房间 | 页面卸载后 WS 仍重连，旧回调 `navigate` | 已修：`useRoomWebSocket` 卸载清理 + `mountedRef` |
 | 复盘无当轮人物 | 旧局无 `assignments_snapshot` | 新开一局；或 fallback 显示终局人物 |
 | 同浏览器测多人 | 共享 localStorage | 普通窗口 + 无痕窗口 |
 | 再来一局仅最后一人进新局 | 未跳转 `/play` | 已修：`ResultsPoster` WS + `fetchData` |
@@ -895,3 +901,4 @@ DEPLOY_RAILWAY.md
 | 管理员搜索筛选 | 中英文模糊搜索；无图/未启用筛选；`characterFilters.ts` |
 | 管理员编辑弹窗 | 新建/编辑 Modal；`components/ui.tsx` `Modal` |
 | 肖像悬浮放大 | `CharacterPortrait` hover 预览；游戏卡内居中 |
+| 退出游戏跳回房间 | WS 卸载后孤儿重连 + 异步 navigate | `useRoomWebSocket` 清理；`mountedRef` |

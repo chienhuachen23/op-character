@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import {
@@ -20,6 +20,8 @@ export function LobbyPage() {
   const { code } = useParams<{ code: string }>();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  const mountedRef = useRef(true);
   const [room, setRoom] = useState<Room | null>(null);
   const [preview, setPreview] = useState<RoomPreview | null>(null);
   const [needsJoin, setNeedsJoin] = useState(() => !sessionMatchesRoom(code));
@@ -27,6 +29,13 @@ export function LobbyPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const fetchPreview = useCallback(async () => {
     if (!code) return;
@@ -50,15 +59,21 @@ export function LobbyPage() {
     }
     try {
       const data = await api.getRoom(code);
+      if (!mountedRef.current) return;
       setRoom(data);
       setNeedsJoin(false);
       setError('');
-      if (data.status === 'playing') {
+      const lobbyPath = `/room/${code}`;
+      if (
+        data.status === 'playing' &&
+        (location.pathname === lobbyPath || location.pathname === `${lobbyPath}/`)
+      ) {
         navigate(`/room/${code}/play`);
       } else if (data.status === 'replay_pending') {
         navigate(`/room/${code}/results`);
       }
     } catch (e) {
+      if (!mountedRef.current) return;
       const msg = (e as Error).message;
       if (msg.includes('token') || msg.includes('Token') || msg.toLowerCase().includes('mismatch')) {
         clearSession();
@@ -68,7 +83,7 @@ export function LobbyPage() {
         setError(msg);
       }
     }
-  }, [code, navigate, fetchPreview]);
+  }, [code, navigate, fetchPreview, location.pathname]);
 
   useEffect(() => {
     fetchRoom();

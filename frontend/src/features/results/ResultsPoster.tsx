@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
@@ -193,12 +193,21 @@ export function ResultsPoster() {
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const mountedRef = useRef(true);
 
   const lang = i18n.language;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
       const matchState = await api.getCurrentMatch();
+      if (!mountedRef.current) return;
       if (matchState.room_status === 'playing') {
         navigate(`/room/${code}/play`);
         return;
@@ -207,6 +216,7 @@ export function ResultsPoster() {
       const sum = normalizeSummary(await api.getMatchSummary(matchState.match_id));
       setSummary(sum);
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     }
   }, [code, navigate]);
@@ -375,7 +385,7 @@ export function ResultsPoster() {
 
       {error && <p className="text-red-400 text-center mb-4">{error}</p>}
 
-      <Button variant="ghost" className="w-full" onClick={() => navigate('/')}>
+      <Button variant="ghost" className="w-full" onClick={() => navigate('/', { replace: true })}>
         {t('backHome')}
       </Button>
     </div>
