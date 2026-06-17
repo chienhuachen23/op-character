@@ -49,6 +49,7 @@ export function CharacterCard({
             imageUrl={character.image_url}
             size="lg"
             initialsClassName="text-2xl"
+            previewPlacement="below"
           />
         ) : (
           <CharacterPortraitSlot size="lg">

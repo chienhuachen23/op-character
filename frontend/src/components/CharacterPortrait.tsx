@@ -13,12 +13,6 @@ const SIZE_WIDTH = {
   lg: 'w-24',
 } as const;
 
-const PREVIEW_WIDTH = {
-  sm: 'w-56',
-  md: 'w-72',
-  lg: 'w-80',
-} as const;
-
 const PREVIEW_WIDTH_PX = {
   sm: 224,
   md: 288,
@@ -27,6 +21,7 @@ const PREVIEW_WIDTH_PX = {
 
 type PortraitSize = keyof typeof SIZE_WIDTH;
 type PreviewStrategy = 'inline' | 'fixed';
+type PreviewPlacement = 'above' | 'below' | 'auto';
 
 interface CharacterPortraitProps {
   name: string;
@@ -38,24 +33,66 @@ interface CharacterPortraitProps {
   initialsClassName?: string;
   hoverPreview?: boolean;
   previewStrategy?: PreviewStrategy;
+  previewPlacement?: PreviewPlacement;
+}
+
+function usePrefersHoverPreview(): boolean {
+  const [prefersHover, setPrefersHover] = useState(() =>
+    typeof window !== 'undefined'
+      ? window.matchMedia('(hover: hover) and (pointer: fine)').matches
+      : true
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const onChange = () => setPrefersHover(media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  return prefersHover;
+}
+
+function resolvePreviewPlacement(
+  anchorRect: DOMRect,
+  previewHeight: number,
+  placement: PreviewPlacement
+): 'above' | 'below' {
+  const gap = 10;
+  const padding = 12;
+  const spaceAbove = anchorRect.top;
+  const spaceBelow = window.innerHeight - anchorRect.bottom;
+  const needed = previewHeight + gap + padding;
+
+  if (placement === 'below') return 'below';
+  if (placement === 'above') return 'above';
+  if (spaceAbove < needed) return 'below';
+  if (spaceBelow < needed) return 'above';
+  return 'below';
 }
 
 function PortraitHoverPreview({
   src,
   size,
   anchorRect,
+  placement,
 }: {
   src: string;
   size: PortraitSize;
   anchorRect: DOMRect;
+  placement: PreviewPlacement;
 }) {
   const width = PREVIEW_WIDTH_PX[size];
   const height = (width * 7) / 5;
   const gap = 10;
-  const showAbove = anchorRect.top >= height + gap + 12;
-  const left = anchorRect.left + anchorRect.width / 2;
-  const top = showAbove ? anchorRect.top - gap : anchorRect.bottom + gap;
-  const transform = showAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)';
+  const edgePadding = 8;
+  const side = resolvePreviewPlacement(anchorRect, height, placement);
+  const left = Math.min(
+    window.innerWidth - edgePadding,
+    Math.max(edgePadding, anchorRect.left + anchorRect.width / 2)
+  );
+  const top = side === 'above' ? anchorRect.top - gap : anchorRect.bottom + gap;
+  const transform = side === 'above' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)';
 
   return createPortal(
     <div
@@ -86,35 +123,98 @@ export function CharacterPortrait({
   initialsClassName,
   hoverPreview = true,
   previewStrategy = 'inline',
+  previewPlacement = 'auto',
 }: CharacterPortraitProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [fixedPreviewRect, setFixedPreviewRect] = useState<DOMRect | null>(null);
+  const prefersHoverPreview = usePrefersHoverPreview();
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRect, setPreviewRect] = useState<DOMRect | null>(null);
   const [failed, setFailed] = useState(false);
   const src = imageUrl ? resolveMediaUrl(imageUrl) : '';
   const hue = ((name.charCodeAt(0) || 0) * 47) % 360;
   const showImage = Boolean(src && !failed);
   const showHoverPreview = hoverPreview && showImage;
-  const useFixedPreview = showHoverPreview && previewStrategy === 'fixed';
+  const usePortalPreview = showHoverPreview && (previewStrategy === 'fixed' || previewStrategy === 'inline');
 
   useEffect(() => {
     setFailed(false);
   }, [imageUrl]);
 
-  const showFixedPreview = () => {
+  const syncPreviewRect = () => {
     if (!rootRef.current) return;
-    setFixedPreviewRect(rootRef.current.getBoundingClientRect());
+    setPreviewRect(rootRef.current.getBoundingClientRect());
   };
 
-  const hideFixedPreview = () => {
-    setFixedPreviewRect(null);
+  const openPreview = () => {
+    syncPreviewRect();
+    setPreviewOpen(true);
   };
+
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewRect(null);
+  };
+
+  const togglePreview = () => {
+    if (previewOpen) {
+      closePreview();
+      return;
+    }
+    openPreview();
+  };
+
+  useEffect(() => {
+    if (!previewOpen || prefersHoverPreview) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        closePreview();
+      }
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [previewOpen, prefersHoverPreview]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+
+    const onViewportChange = () => syncPreviewRect();
+    window.addEventListener('scroll', onViewportChange, true);
+    window.addEventListener('resize', onViewportChange);
+    return () => {
+      window.removeEventListener('scroll', onViewportChange, true);
+      window.removeEventListener('resize', onViewportChange);
+    };
+  }, [previewOpen]);
 
   return (
     <div
       ref={rootRef}
-      className={clsx('relative inline-block group', showHoverPreview && 'cursor-zoom-in')}
-      onMouseEnter={useFixedPreview ? showFixedPreview : undefined}
-      onMouseLeave={useFixedPreview ? hideFixedPreview : undefined}
+      className={clsx('relative inline-block', showHoverPreview && 'cursor-zoom-in')}
+      onMouseEnter={showHoverPreview && prefersHoverPreview ? openPreview : undefined}
+      onMouseLeave={showHoverPreview && prefersHoverPreview ? closePreview : undefined}
+      onClick={
+        showHoverPreview && !prefersHoverPreview
+          ? (event) => {
+              event.stopPropagation();
+              togglePreview();
+            }
+          : undefined
+      }
+      onKeyDown={
+        showHoverPreview && !prefersHoverPreview
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                togglePreview();
+              }
+            }
+          : undefined
+      }
+      role={showHoverPreview && !prefersHoverPreview ? 'button' : undefined}
+      tabIndex={showHoverPreview && !prefersHoverPreview ? 0 : undefined}
+      aria-label={showHoverPreview && !prefersHoverPreview ? name : undefined}
     >
       <div
         className={clsx(
@@ -150,23 +250,13 @@ export function CharacterPortrait({
           </div>
         )}
       </div>
-      {showHoverPreview && previewStrategy === 'inline' && (
-        <div
-          className={clsx(
-            'pointer-events-none absolute left-1/2 bottom-full z-50 mb-2 -translate-x-1/2',
-            'opacity-0 scale-95 transition-all duration-150',
-            'group-hover:opacity-100 group-hover:scale-100',
-            PREVIEW_WIDTH[size]
-          )}
-          aria-hidden
-        >
-          <div className={clsx(CHARACTER_PORTRAIT_FRAME, 'border-straw shadow-2xl shadow-black/40 bg-ocean')}>
-            <img src={src} alt="" className="w-full h-full object-cover object-center" />
-          </div>
-        </div>
-      )}
-      {useFixedPreview && fixedPreviewRect && (
-        <PortraitHoverPreview src={src} size={size} anchorRect={fixedPreviewRect} />
+      {usePortalPreview && previewOpen && previewRect && (
+        <PortraitHoverPreview
+          src={src}
+          size={size}
+          anchorRect={previewRect}
+          placement={previewPlacement}
+        />
       )}
     </div>
   );
