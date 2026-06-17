@@ -15,7 +15,7 @@ import {
   exportCharactersCsv,
   parseCharacterCsv,
 } from './characterCsv';
-import { filterCharacters, characterCoverImageUrl } from './characterFilters';
+import { filterCharacters, characterCoverImageUrl, usableCharacterImages } from './characterFilters';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
 
@@ -64,6 +64,7 @@ export function AdminThemeDetailPage() {
   const [pendingCreateImage, setPendingCreateImage] = useState<File | null>(null);
   const [importMessage, setImportMessage] = useState('');
   const [uploadMessage, setUploadMessage] = useState('');
+  const [highlightImageId, setHighlightImageId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterNoImage, setFilterNoImage] = useState(false);
   const [filterInactive, setFilterInactive] = useState(false);
@@ -189,11 +190,20 @@ export function AdminThemeDetailPage() {
     try {
       const updated = await uploadImageForCharacter(file, characterId);
       const displayName = character ? characterName(character, lang) : '';
+      const imageCount = updated.image_count ?? updated.images?.length ?? 0;
+      const uploadedId =
+        'uploaded_image_id' in updated && typeof updated.uploaded_image_id === 'number'
+          ? updated.uploaded_image_id
+          : updated.images?.[updated.images.length - 1]?.id ?? null;
       setCharacters((prev) =>
         prev.map((item) => (item.id === characterId ? updated : item))
       );
+      if (uploadedId) {
+        setHighlightImageId(uploadedId);
+        window.setTimeout(() => setHighlightImageId(null), 2500);
+      }
       if (displayName) {
-        setUploadMessage(t('adminUploadSuccess', { name: displayName }));
+        setUploadMessage(t('adminUploadAdded', { name: displayName, count: imageCount }));
       }
     } catch (e) {
       setError((e as Error).message);
@@ -513,7 +523,8 @@ export function AdminThemeDetailPage() {
           const isDragOver = dragOverCharacterId === character.id;
           const isUploading = loading && uploadTargetId === character.id;
           const coverUrl = characterCoverImageUrl(character);
-          const imageCount = character.image_count ?? character.images?.length ?? 0;
+          const galleryImages = usableCharacterImages(character);
+          const imageCount = galleryImages.length;
           const portraitKey = `${character.id}:${imageCount}:${character.images?.map((image) => image.id).join(',') ?? ''}`;
           return (
             <div
@@ -566,25 +577,42 @@ export function AdminThemeDetailPage() {
                 {!character.is_active && (
                   <p className="text-xs text-red-300 mt-1">{t('adminCharacterInactive')}</p>
                 )}
-                {character.images && character.images.length > 0 && (
-                  <div className="flex flex-wrap gap-2 justify-center mt-3 w-full">
-                    {character.images.map((image) => (
-                      <div key={image.id} className="relative">
-                        <CharacterPortrait
-                          imageUrl={image.image_url}
-                          name={displayName}
-                          size="sm"
-                        />
-                        <button
-                          type="button"
-                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-600 text-white text-xs leading-none hover:bg-red-500"
-                          onClick={() => void handleDeleteImage(character.id, image.id)}
-                          aria-label={t('delete')}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
+                {galleryImages.length > 0 && (
+                  <div className="mt-3 w-full">
+                    <p className="text-xs text-parchment/50 mb-2">{t('adminAllImages')}</p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {galleryImages.map((image) => {
+                        const isNew = highlightImageId === image.id;
+                        const isLatest =
+                          galleryImages[galleryImages.length - 1]?.id === image.id;
+                        return (
+                          <div key={image.id} className="relative">
+                            <CharacterPortrait
+                              imageUrl={image.image_url}
+                              name={displayName}
+                              size="sm"
+                              className={clsx(
+                                isNew && 'ring-2 ring-green-400',
+                                isLatest && !isNew && imageCount > 1 && 'ring-2 ring-straw/60'
+                              )}
+                            />
+                            {isLatest && imageCount > 1 && (
+                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] px-1 rounded bg-straw/90 text-wood whitespace-nowrap">
+                                {t('adminLatestImage')}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-600 text-white text-xs leading-none hover:bg-red-500"
+                              onClick={() => void handleDeleteImage(character.id, image.id)}
+                              aria-label={t('delete')}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

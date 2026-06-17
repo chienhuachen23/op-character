@@ -153,10 +153,13 @@ export const adminApi = {
   addCharacterImage: (characterId: number, file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return adminFetch<AdminCharacter>(`/admin/characters/${characterId}/images`, {
-      method: 'POST',
-      body: form,
-    });
+    return adminFetch<AdminCharacter & { uploaded_image_id?: number }>(
+      `/admin/characters/${characterId}/images`,
+      {
+        method: 'POST',
+        body: form,
+      }
+    );
   },
 
   deleteCharacterImage: (characterId: number, imageId: number) =>

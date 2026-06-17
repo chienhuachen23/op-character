@@ -17,10 +17,16 @@ export function characterHasImage(character: AdminCharacter): boolean {
 }
 
 export function characterCoverImageUrl(character: AdminCharacter): string | undefined {
-  const fromGallery = character.images?.find((image) => isUsableImageUrl(image.image_url));
-  if (fromGallery) return fromGallery.image_url;
+  const usable = (character.images ?? []).filter((image) => isUsableImageUrl(image.image_url));
+  if (usable.length > 0) {
+    return usable[usable.length - 1].image_url;
+  }
   const legacy = character.image_url?.trim() ?? '';
   return legacy || undefined;
+}
+
+export function usableCharacterImages(character: AdminCharacter) {
+  return (character.images ?? []).filter((image) => isUsableImageUrl(image.image_url));
 }
 
 export function matchesCharacterSearch(character: AdminCharacter, query: string): boolean {

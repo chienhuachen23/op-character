@@ -197,15 +197,28 @@ class AdminCharacterImageUploadView(APIView):
             raise GameAPIException("NOT_FOUND", "Character not found", 404)
         return character
 
+    def _ensure_legacy_image_in_gallery(self, character: Character):
+        legacy = (character.image_url or "").strip()
+        if not legacy:
+            return
+        if character.images.filter(image_url=legacy).exists():
+            return
+        CharacterImage.objects.create(
+            character=character,
+            image_url=legacy,
+            sort_order=character.images.count(),
+        )
+
     def post(self, request, character_id):
         uploaded = request.FILES.get("file")
         if not uploaded:
             raise GameAPIException("INVALID_REQUEST", "No file uploaded", 400)
 
         character = self.get_character(character_id)
+        self._ensure_legacy_image_in_gallery(character)
         url = AdminImageUploadView()._save_upload(uploaded, character.theme.slug)
         next_order = character.images.count()
-        CharacterImage.objects.create(
+        new_image = CharacterImage.objects.create(
             character=character,
             image_url=url,
             sort_order=next_order,
@@ -213,7 +226,9 @@ class AdminCharacterImageUploadView(APIView):
         character.image_url = url
         character.save(update_fields=["image_url"])
         character = self.get_character(character_id)
-        return Response(AdminCharacterSerializer(character).data, status=201)
+        data = AdminCharacterSerializer(character).data
+        data["uploaded_image_id"] = new_image.id
+        return Response(data, status=201)
 
 
 class AdminCharacterImageDeleteView(APIView):

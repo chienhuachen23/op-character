@@ -74,3 +74,23 @@ class CharacterImageTest(TestCase):
             assignment.display_image_url,
             {"/media/a.jpg", "/media/b.jpg"},
         )
+
+    def test_upload_preserves_legacy_image_in_gallery(self):
+        self.character.images.all().delete()
+        self.character.image_url = "/media/legacy-only.jpg"
+        self.character.save(update_fields=["image_url"])
+
+        from apps.catalog.admin_views import AdminCharacterImageUploadView
+
+        view = AdminCharacterImageUploadView()
+        view._ensure_legacy_image_in_gallery(self.character)
+        CharacterImage.objects.create(
+            character=self.character,
+            image_url="/media/new.jpg",
+            sort_order=self.character.images.count(),
+        )
+
+        urls = list(self.character.images.order_by("sort_order").values_list("image_url", flat=True))
+        self.assertEqual(len(urls), 2)
+        self.assertIn("/media/legacy-only.jpg", urls)
+        self.assertIn("/media/new.jpg", urls)
