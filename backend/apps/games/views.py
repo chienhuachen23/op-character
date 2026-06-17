@@ -179,3 +179,40 @@ class ThemeCharactersView(APIView):
         room = request.room
         characters = Character.objects.filter(theme=room.theme, is_active=True)
         return Response(CharacterSerializer(characters, many=True).data)
+
+
+class RequestCharacterRerollView(APIView):
+    permission_classes = [PlayerTokenPermission]
+
+    def post(self, request):
+        room = request.room
+        match = room.current_match
+        if not match:
+            raise GameAPIException("NO_ACTIVE_MATCH", "No active match", 404)
+        target_player_id = request.data.get("target_player_id")
+        if not target_player_id:
+            raise GameAPIException("INVALID_TARGET", "target_player_id required")
+        engine = get_engine_for_room(room)
+        state = engine.request_character_reroll(match, request.player, int(target_player_id))
+        return Response(state)
+
+
+class ConfirmCharacterRerollView(APIView):
+    permission_classes = [PlayerTokenPermission]
+
+    def post(self, request):
+        room = request.room
+        match = room.current_match
+        if not match:
+            raise GameAPIException("NO_ACTIVE_MATCH", "No active match", 404)
+        target_player_id = request.data.get("target_player_id")
+        if not target_player_id:
+            raise GameAPIException("INVALID_TARGET", "target_player_id required")
+        approved = request.data.get("approved")
+        if approved is None:
+            raise GameAPIException("INVALID_REQUEST", "approved required")
+        engine = get_engine_for_room(room)
+        state = engine.confirm_character_reroll(
+            match, request.player, int(target_player_id), bool(approved)
+        )
+        return Response(state)

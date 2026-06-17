@@ -6,6 +6,8 @@ from apps.core.exceptions import GameAPIException
 from apps.games.base import GameEngine
 from apps.rooms.models import (
     AuthorHintRating,
+    CharacterRerollRequest,
+    CharacterRerollStatus,
     GameType,
     Guess,
     GuessVerdict,
@@ -41,6 +43,32 @@ class CharacterAssigner:
                 player=player,
                 defaults={"character": character},
             )
+
+    @staticmethod
+    def reroll_for_player(match: Match, player: Player) -> Character:
+        theme = match.room.theme
+        assigned_ids = list(match.assignments.values_list("character_id", flat=True))
+        assignment = match.assignments.get(player=player)
+        candidates = list(
+            Character.objects.filter(theme=theme, is_active=True)
+            .exclude(id__in=assigned_ids)
+            .order_by("?")
+        )
+        if not candidates:
+            candidates = list(
+                Character.objects.filter(theme=theme, is_active=True)
+                .exclude(id=assignment.character_id)
+                .order_by("?")
+            )
+        if not candidates:
+            raise GameAPIException(
+                "NOT_ENOUGH_CHARACTERS",
+                "No alternative character available for reroll",
+                500,
+            )
+        assignment.character = candidates[0]
+        assignment.save(update_fields=["character"])
+        return assignment.character
 
 
 class ScoreCalculator:
@@ -551,7 +579,103 @@ class TraitGuessEngine(GameEngine):
             "coop": coop_info,
             "replay_votes": replay_votes,
             "players_ready_hints": self._players_ready_hints(current_round) if current_round else [],
+            "character_reroll": self._serialize_character_reroll(current_round, player)
+            if current_round
+            else None,
         }
+
+    def _get_third_player_id(self, round_obj: Round, player_a_id: int, player_b_id: int) -> int | None:
+        for player in round_obj.match.room.players.all():
+            if player.id not in (player_a_id, player_b_id):
+                return player.id
+        return None
+
+    def _serialize_character_reroll(self, round_obj: Round, viewer: Player):
+        if not round_obj or not self._is_round_active(round_obj):
+            return None
+        request = (
+            CharacterRerollRequest.objects.filter(
+                round=round_obj, status=CharacterRerollStatus.PENDING
+            )
+            .select_related("target_player", "requester_player")
+            .first()
+        )
+        if not request:
+            return None
+        confirmer_id = self._get_third_player_id(
+            round_obj, request.requester_player_id, request.target_player_id
+        )
+        return {
+            "target_player_id": request.target_player_id,
+            "target_player_name": request.target_player.display_name,
+            "requester_player_id": request.requester_player_id,
+            "requester_player_name": request.requester_player.display_name,
+            "confirmer_player_id": confirmer_id,
+            "status": request.status,
+        }
+
+    def _reset_player_guess_after_reroll(self, round_obj: Round, target_player: Player):
+        Guess.objects.filter(round=round_obj, player=target_player).delete()
+
+    def request_character_reroll(self, match: Match, requester: Player, target_player_id: int):
+        current_round = self._get_current_round(match)
+        if not current_round:
+            raise GameAPIException("INVALID_PHASE", "No active round")
+        self._normalize_round_phase(current_round)
+        if not self._is_round_active(current_round):
+            raise GameAPIException("INVALID_PHASE", "Round is not active")
+        if requester.id == target_player_id:
+            raise GameAPIException("INVALID_TARGET", "Cannot reroll your own character")
+        target = match.room.players.filter(id=target_player_id).first()
+        if not target:
+            raise GameAPIException("INVALID_TARGET", "Target player not found", 404)
+        if not match.assignments.filter(player=target).exists():
+            raise GameAPIException("INVALID_TARGET", "Target player has no assignment", 400)
+        if CharacterRerollRequest.objects.filter(
+            round=current_round, status=CharacterRerollStatus.PENDING
+        ).exists():
+            raise GameAPIException("REROLL_PENDING", "Another character reroll is pending", 409)
+
+        CharacterRerollRequest.objects.create(
+            round=current_round,
+            target_player=target,
+            requester_player=requester,
+            status=CharacterRerollStatus.PENDING,
+        )
+        self._broadcast(match)
+        return self.get_state(match, requester)
+
+    def confirm_character_reroll(
+        self, match: Match, confirmer: Player, target_player_id: int, approved: bool
+    ):
+        current_round = self._get_current_round(match)
+        if not current_round:
+            raise GameAPIException("INVALID_PHASE", "No active round")
+        self._normalize_round_phase(current_round)
+        if not self._is_round_active(current_round):
+            raise GameAPIException("INVALID_PHASE", "Round is not active")
+
+        request = CharacterRerollRequest.objects.filter(
+            round=current_round,
+            target_player_id=target_player_id,
+            status=CharacterRerollStatus.PENDING,
+        ).select_related("target_player").first()
+        if not request:
+            raise GameAPIException("REROLL_NOT_FOUND", "No pending reroll for this player", 404)
+
+        expected_confirmer_id = self._get_third_player_id(
+            current_round, request.requester_player_id, request.target_player_id
+        )
+        if confirmer.id != expected_confirmer_id:
+            raise GameAPIException("INVALID_CONFIRMER", "Only the third player can confirm reroll", 403)
+
+        if approved:
+            CharacterAssigner.reroll_for_player(match, request.target_player)
+            self._reset_player_guess_after_reroll(current_round, request.target_player)
+        request.delete()
+
+        self._broadcast(match)
+        return self.get_state(match, confirmer)
 
     def _players_ready_hints(self, round_obj: Round):
         if not round_obj or not self._is_round_active(round_obj):

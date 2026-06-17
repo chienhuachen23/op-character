@@ -105,6 +105,14 @@ export interface MatchState {
     scores: Record<string, number> | null;
     pending_scores: Record<string, number> | null;
   } | null;
+  character_reroll: {
+    target_player_id: number;
+    target_player_name: string;
+    requester_player_id: number;
+    requester_player_name: string;
+    confirmer_player_id: number | null;
+    status: string;
+  } | null;
 }
 
 export interface RoomPreview {
@@ -256,6 +264,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  requestCharacterReroll: (targetPlayerId: number) =>
+    apiFetch<MatchState>('/rounds/current/character-rerolls', {
+      method: 'POST',
+      body: JSON.stringify({ target_player_id: targetPlayerId }),
+    }),
+
+  confirmCharacterReroll: (targetPlayerId: number, approved: boolean) =>
+    apiFetch<MatchState>('/rounds/current/character-rerolls/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ target_player_id: targetPlayerId, approved }),
+    }),
+
   submitGuessVote: (guessId: number, is_correct: boolean) =>
     apiFetch<MatchState>(`/guesses/${guessId}/votes`, {
       method: 'POST',

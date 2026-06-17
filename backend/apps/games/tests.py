@@ -256,6 +256,50 @@ class TraitGuessEngineTest(TestCase):
         self.assertIsNone(state["self"]["character"])
         self.assertTrue(all(o["character"] for o in state["others"]))
 
+    def test_character_reroll_requires_third_player_confirmation(self):
+        match = self.match
+        engine = self.engine
+        original_char_id = match.assignments.get(player=self.p2).character_id
+
+        engine.request_character_reroll(match, self.host, self.p2.id)
+        state = engine.get_state(match, self.host)
+        self.assertIsNotNone(state["character_reroll"])
+        self.assertEqual(state["character_reroll"]["target_player_id"], self.p2.id)
+        self.assertEqual(state["character_reroll"]["confirmer_player_id"], self.p3.id)
+
+        with self.assertRaises(Exception):
+            engine.confirm_character_reroll(match, self.host, self.p2.id, True)
+
+        engine.confirm_character_reroll(match, self.p3, self.p2.id, True)
+        new_char_id = match.assignments.get(player=self.p2).character_id
+        self.assertNotEqual(new_char_id, original_char_id)
+
+        state_p2 = engine.get_state(match, self.p2)
+        self.assertIsNone(state_p2["character_reroll"])
+
+        state_host = engine.get_state(match, self.host)
+        host_view_p2 = next(o for o in state_host["others"] if o["player_id"] == self.p2.id)
+        self.assertEqual(host_view_p2["character"]["id"], new_char_id)
+
+    def test_character_reroll_resets_target_correct_guess(self):
+        match = self.match
+        engine = self.engine
+        assignment = match.assignments.get(player=self.p2)
+        engine.submit_guess(match, self.p2, text=assignment.character.name_zh)
+        guess = match.rounds.first().guesses.get(player=self.p2)
+        engine.submit_guess_vote(guess, self.host, True)
+        engine.submit_guess_vote(guess, self.p3, True)
+
+        state_before = engine.get_state(match, self.p2)
+        self.assertIsNotNone(state_before["self"]["character"])
+
+        engine.request_character_reroll(match, self.host, self.p2.id)
+        engine.confirm_character_reroll(match, self.p3, self.p2.id, True)
+
+        state_after = engine.get_state(match, self.p2)
+        self.assertIsNone(state_after["self"]["character"])
+        self.assertFalse(match.rounds.first().guesses.filter(player=self.p2).exists())
+
 
 class RoomServiceTest(TestCase):
     def setUp(self):

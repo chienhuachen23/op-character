@@ -242,3 +242,30 @@ class ReplayVote(models.Model):
     class Meta:
         db_table = "replay_votes"
         unique_together = [("match", "player")]
+
+
+class CharacterRerollStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    REJECTED = "rejected", "Rejected"
+
+
+class CharacterRerollRequest(models.Model):
+    round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="character_reroll_requests")
+    target_player = models.ForeignKey(
+        Player, on_delete=models.CASCADE, related_name="character_reroll_targets"
+    )
+    requester_player = models.ForeignKey(
+        Player, on_delete=models.CASCADE, related_name="character_reroll_requests_made"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=CharacterRerollStatus.choices,
+        default=CharacterRerollStatus.PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "character_reroll_requests"
+        indexes = [
+            models.Index(fields=["round", "status"], name="character_r_round_i_6f0a2a_idx"),
+        ]

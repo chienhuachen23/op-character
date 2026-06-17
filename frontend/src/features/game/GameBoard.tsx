@@ -116,6 +116,89 @@ function WrongGuessesList({
   );
 }
 
+function CharacterRerollPanel({
+  state,
+  targetPlayerId,
+  isPlayPhase,
+  loading,
+  t,
+  onRequest,
+  onConfirm,
+}: {
+  state: MatchState;
+  targetPlayerId: number;
+  isPlayPhase: boolean;
+  loading: boolean;
+  t: (key: string, opts?: Record<string, string>) => string;
+  onRequest: (targetPlayerId: number) => void;
+  onConfirm: (targetPlayerId: number, approved: boolean) => void;
+}) {
+  if (!isPlayPhase) return null;
+
+  const selfId = state.self.player_id;
+  const reroll = state.character_reroll;
+  const pendingForTarget =
+    reroll?.status === 'pending' && reroll.target_player_id === targetPlayerId;
+
+  if (pendingForTarget && reroll) {
+    if (selfId === reroll.confirmer_player_id) {
+      return (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-parchment/70 text-center">
+            {t('rerollConfirmPrompt', {
+              requester: reroll.requester_player_name,
+              target: reroll.target_player_name,
+            })}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              className="flex-1 text-sm py-2"
+              disabled={loading}
+              onClick={() => onConfirm(targetPlayerId, true)}
+            >
+              {t('rerollApprove')}
+            </Button>
+            <Button
+              className="flex-1 text-sm py-2"
+              variant="ghost"
+              disabled={loading}
+              onClick={() => onConfirm(targetPlayerId, false)}
+            >
+              {t('rerollReject')}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    if (selfId === reroll.requester_player_id) {
+      return (
+        <p className="text-xs text-parchment/60 mt-2 text-center">{t('rerollWaitingConfirm')}</p>
+      );
+    }
+    if (selfId === targetPlayerId) {
+      return (
+        <p className="text-xs text-amber-200/90 mt-2 text-center">{t('rerollPendingForYou')}</p>
+      );
+    }
+    return null;
+  }
+
+  if (!reroll && selfId !== targetPlayerId) {
+    return (
+      <Button
+        variant="ghost"
+        className="mt-2 w-full text-sm"
+        disabled={loading}
+        onClick={() => onRequest(targetPlayerId)}
+      >
+        {t('rerollRequest')}
+      </Button>
+    );
+  }
+
+  return null;
+}
+
 export function GameBoard() {
   const { code } = useParams<{ code: string }>();
   const { t, i18n } = useTranslation();
@@ -214,6 +297,32 @@ export function GameBoard() {
     }
   };
 
+  const handleRerollRequest = async (targetPlayerId: number) => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.requestCharacterReroll(targetPlayerId);
+      setState(data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRerollConfirm = async (targetPlayerId: number, approved: boolean) => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.confirmCharacterReroll(targetPlayerId, approved);
+      setState(data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!state) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -261,20 +370,41 @@ export function GameBoard() {
       </motion.div>
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
-        <CharacterCard
-          isSelf
-          character={state.self.character}
-          displayName={state.self.display_name}
-          language={lang}
-          revealed={!!state.self.character}
-        />
-        {state.others.map((o) => (
+        <div>
           <CharacterCard
-            key={o.player_id}
-            character={o.character}
-            displayName={o.display_name}
+            isSelf
+            character={state.self.character}
+            displayName={state.self.display_name}
             language={lang}
+            revealed={!!state.self.character}
           />
+          <CharacterRerollPanel
+            state={state}
+            targetPlayerId={state.self.player_id}
+            isPlayPhase={isPlayPhase}
+            loading={loading}
+            t={t}
+            onRequest={handleRerollRequest}
+            onConfirm={handleRerollConfirm}
+          />
+        </div>
+        {state.others.map((o) => (
+          <div key={o.player_id}>
+            <CharacterCard
+              character={o.character}
+              displayName={o.display_name}
+              language={lang}
+            />
+            <CharacterRerollPanel
+              state={state}
+              targetPlayerId={o.player_id}
+              isPlayPhase={isPlayPhase}
+              loading={loading}
+              t={t}
+              onRequest={handleRerollRequest}
+              onConfirm={handleRerollConfirm}
+            />
+          </div>
         ))}
       </div>
 
