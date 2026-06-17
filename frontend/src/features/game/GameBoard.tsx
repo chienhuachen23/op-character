@@ -380,7 +380,7 @@ export function GameBoard() {
       </motion.div>
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
-        <div>
+        <div className="min-w-0">
           <CharacterCard
             isSelf
             character={state.self.character}
@@ -399,7 +399,7 @@ export function GameBoard() {
           />
         </div>
         {state.others.map((o) => (
-          <div key={o.player_id}>
+          <div key={o.player_id} className="min-w-0">
             <CharacterCard
               character={o.character}
               displayName={o.display_name}

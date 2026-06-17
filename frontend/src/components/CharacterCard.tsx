@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import type { Character } from '../api/client';
 import { characterName } from '../i18n';
-import { CharacterPortrait, CharacterPortraitSlot } from './CharacterPortrait';
+import { CharacterPortrait, CharacterPortraitSlot, CHARACTER_CARD_PORTRAIT_SHELL } from './CharacterPortrait';
 
 interface CharacterCardProps {
   character?: Character | null;
@@ -25,7 +25,7 @@ export function CharacterCard({
     <motion.div
       layout
       className={clsx(
-        'relative rounded-2xl border-2 p-4 text-center transition-all',
+        'relative w-full rounded-2xl border-2 p-4 text-center transition-all',
         hidden
           ? 'border-straw/40 bg-ocean/80'
           : 'border-straw bg-gradient-to-b from-parchment/20 to-ocean/40'
@@ -35,27 +35,29 @@ export function CharacterCard({
         <p className="text-sm text-straw/80 mb-2 font-medium">{displayName}</p>
       )}
       <motion.div
-        className="flex justify-center w-full"
+        className="flex w-full justify-center"
         animate={hidden ? { rotateY: [0, 10, -10, 0] } : {}}
         transition={{ repeat: hidden ? Infinity : 0, duration: 3 }}
       >
-        {hidden ? (
-          <CharacterPortraitSlot size="card">
-            <span className="text-4xl font-bold text-straw">?</span>
-          </CharacterPortraitSlot>
-        ) : character ? (
-          <CharacterPortrait
-            name={characterName(character, language)}
-            imageUrl={character.image_url}
-            size="card"
-            initialsClassName="text-2xl"
-            previewPlacement="below"
-          />
-        ) : (
-          <CharacterPortraitSlot size="card">
-            <span className="text-2xl text-parchment/50">—</span>
-          </CharacterPortraitSlot>
-        )}
+        <div className={CHARACTER_CARD_PORTRAIT_SHELL}>
+          {hidden ? (
+            <CharacterPortraitSlot size="card">
+              <span className="text-4xl font-bold text-straw">?</span>
+            </CharacterPortraitSlot>
+          ) : character ? (
+            <CharacterPortrait
+              name={characterName(character, language)}
+              imageUrl={character.image_url}
+              size="card"
+              initialsClassName="text-2xl"
+              previewPlacement="below"
+            />
+          ) : (
+            <CharacterPortraitSlot size="card">
+              <span className="text-2xl text-parchment/50">—</span>
+            </CharacterPortraitSlot>
+          )}
+        </div>
       </motion.div>
       <p className="mt-3 font-bold text-lg">
         {hidden

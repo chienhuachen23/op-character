@@ -11,8 +11,11 @@ const SIZE_WIDTH = {
   sm: 'w-16',
   md: 'w-20',
   lg: 'w-24',
-  card: 'w-4/5',
+  card: 'w-full h-full max-w-full',
 } as const;
+
+/** Reserved portrait area on game character cards (~80% of card width, 5:7). */
+export const CHARACTER_CARD_PORTRAIT_SHELL = 'mx-auto w-4/5 max-w-full aspect-[5/7]';
 
 const PREVIEW_WIDTH_PX = {
   sm: 224,
@@ -193,7 +196,10 @@ export function CharacterPortrait({
   return (
     <div
       ref={rootRef}
-      className={clsx('relative inline-block', showHoverPreview && 'cursor-zoom-in')}
+      className={clsx(
+        size === 'card' ? 'relative block h-full w-full' : 'relative inline-block',
+        showHoverPreview && 'cursor-zoom-in'
+      )}
       onMouseEnter={showHoverPreview && prefersHoverPreview ? openPreview : undefined}
       onMouseLeave={showHoverPreview && prefersHoverPreview ? closePreview : undefined}
       onClick={
@@ -220,7 +226,9 @@ export function CharacterPortrait({
     >
       <div
         className={clsx(
-          CHARACTER_PORTRAIT_FRAME,
+          size === 'card'
+            ? 'h-full w-full rounded-xl overflow-hidden border-2 border-straw/40 bg-ocean'
+            : CHARACTER_PORTRAIT_FRAME,
           SIZE_WIDTH[size],
           dashed && 'border-dashed bg-ocean/40',
           className
@@ -280,7 +288,9 @@ export function CharacterPortraitSlot({
   return (
     <div
       className={clsx(
-        CHARACTER_PORTRAIT_FRAME,
+        size === 'card'
+          ? 'h-full w-full rounded-xl overflow-hidden border-2 border-straw/40 bg-ocean'
+          : CHARACTER_PORTRAIT_FRAME,
         SIZE_WIDTH[size],
         dashed && 'border-dashed bg-ocean/40',
         'flex items-center justify-center',
