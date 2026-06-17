@@ -26,6 +26,9 @@ python manage.py migrate --noinput
 echo "Seeding catalog data..."
 python manage.py seed_one_piece
 
+echo "Checking catalog..."
+python manage.py shell -c "from apps.catalog.models import Character; print(f'Database ready: {Character.objects.count()} characters in catalog')"
+
 if [ -f "${FRONTEND_DIST}/index.html" ]; then
   echo "Frontend bundle: ok"
 else
