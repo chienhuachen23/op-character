@@ -398,7 +398,6 @@ export function AdminThemeDetailPage() {
             : t('adminUploadAdded', { name: displayName, count: imageCount })
         );
       }
-      setGalleryCharacterId(characterId);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -454,7 +453,6 @@ export function AdminThemeDetailPage() {
             : t('adminUploadAdded', { name: displayName, count: imageCount })
         );
       }
-      setGalleryCharacterId(characterId);
     } catch (e) {
       setError((e as Error).message);
     } finally {

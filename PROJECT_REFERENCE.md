@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-17（v10）
+> 最后更新：2026-06-18（v11）
 
 ---
 
@@ -15,6 +15,12 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v10→v11）：**
+
+- **拖拽上传增强**：同步捕获 `DataTransfer`（避免 `await` 后数据被清空）；从 `items` 读取文件（兼容微信/网页拖入）；支持 `data:` / `blob:` URL；外链 CORS 失败时走后端 `POST /admin/characters/{id}/images/from-url` 服务端拉图
+- **拖拽上传 UX**：上传成功仅更新卡片 + 绿色提示 + 短暂高亮新图；**不再**自动打开图片管理弹窗（须点击肖像手动打开）
+- **多图拖入**：角色卡片支持一次拖入多张本地/网页图片
 
 **近期重要变更（v9→v10）：**
 
@@ -209,8 +215,8 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 - 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
 - **搜索与筛选**：中英文模糊搜索；勾选「无图片」（图库无有效图且无有效 `image_url`）、「未启用随机分配」（`is_active=false`）
 - **编辑 UX**：新建/编辑人物在 **Modal 弹窗**中完成（Esc / 遮罩关闭）
-- **多图管理**：人物卡片显示**叠加肖像**（≥2 张）+ 数量角标；点击打开 `AdminCharacterGalleryModal` 管理全部图片（悬停放大、× 删除）；拖放/「添加图片」追加
-- 图片存储：`POST /admin/characters/{id}/images` → `media/characters/{theme_slug}/`；`Character.image_url` 保留为封面（最新一张，兼容旧逻辑）
+- **多图管理**：人物卡片显示**叠加肖像**（≥2 张）+ 数量角标；**点击**打开 `AdminCharacterGalleryModal` 管理全部图片（悬停放大、× 删除）；拖放/「添加图片」追加（上传成功不自动弹窗）
+- 图片存储：`POST /admin/characters/{id}/images` 追加图片；`POST /admin/characters/{id}/images/from-url` 从外链导入（拖拽网页图 CORS 兜底）；`DELETE .../images/{image_id}` 删除
 - **CSV**：导出 `中文名,英文名`；导入为**增量**（仅新增行，不删不改已有）；`POST /admin/themes/{id}/characters/import`
 - 上传成功有绿色提示；列表即时刷新头像（勿依赖整页刷新）
 - 后端：`catalog/admin_views.py`、`admin_serializers.py`、`permissions.py`
@@ -475,6 +481,7 @@ python manage.py seed_one_piece
 | POST | `/admin/themes/{id}/characters/import` | `{characters:[{name_zh,name_en}]}` | 批量增量导入 |
 | PATCH/DELETE | `/admin/characters/{id}` | - | 更新/删除人物 |
 | POST | `/admin/characters/{id}/images` | `multipart: file` | 为人物**追加**一张图片 |
+| POST | `/admin/characters/{id}/images/from-url` | `{url}` | 从 http(s) 外链下载并追加图片（拖拽网页图 CORS 兜底） |
 | DELETE | `/admin/characters/{id}/images/{image_id}` | - | 删除人物某张图片 |
 | POST | `/admin/upload-image` | `multipart: file, theme_slug` | 仅上传文件返回 URL（遗留） |
 
@@ -795,6 +802,8 @@ docker-compose up --build
 | 管理员 `invalid JSON` | DB 500 HTML | `start.sh` migrate+seed；检查 `/api/v1/game-modes` 是否 JSON |
 | 管理员 `ADMIN_DISABLED` | 无 `ADMIN_API_KEY` | Railway Variables 配置 |
 | 管理员上传成功但头像不变 | `CharacterPortrait` `failed` 未重置 | 已修；硬刷新可验证 |
+| 网页/微信拖图提示「请拖放图片文件」 | `dataTransfer` 异步后清空或仅有 URL 无文件 | 已修：同步捕获 + `items` + 服务端 `from-url` |
+| 拖拽上传后自动弹出图库 | 上传成功调用了 `setGalleryCharacterId` | 已修：仅点击肖像打开弹窗 |
 | `makemigrations` 提示 rooms 索引漂移 | 索引名与 migration 不一致 | 模型 `Index` 须带 `name="character_r_round_i_6f0a2a_idx"` |
 
 ---
@@ -918,3 +927,6 @@ DEPLOY_RAILWAY.md
 | 肖像悬浮放大 | `CharacterPortrait` hover 预览；游戏卡内居中 |
 | 退出游戏跳回房间 | WS 卸载后孤儿重连 + 异步 navigate | `useRoomWebSocket` 清理；`mountedRef` |
 | 人物多图 | `character_images` + 分配时随机 `display_image_url` | 管理员追加/删除图片 API |
+| 管理员多图 UI | 叠加卡片 + 角标 + 点击弹窗管理 | `AdminCharacterImageStack`、`AdminCharacterGalleryModal` |
+| 拖拽上传增强 | 同步捕获 DataTransfer、`items` API、外链服务端导入 | `AdminCharacterImageFromUrlView` |
+| 上传不自动弹窗 | 拖放/选择上传成功不打开图库 Modal | 仅点击肖像打开 |
