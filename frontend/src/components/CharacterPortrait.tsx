@@ -14,15 +14,15 @@ const SIZE_WIDTH = {
 } as const;
 
 const PREVIEW_WIDTH = {
-  sm: 'w-32',
-  md: 'w-40',
-  lg: 'w-48',
+  sm: 'w-56',
+  md: 'w-72',
+  lg: 'w-80',
 } as const;
 
 const PREVIEW_WIDTH_PX = {
-  sm: 128,
-  md: 160,
-  lg: 192,
+  sm: 224,
+  md: 288,
+  lg: 320,
 } as const;
 
 type PortraitSize = keyof typeof SIZE_WIDTH;
