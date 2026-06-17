@@ -11,12 +11,14 @@ const SIZE_WIDTH = {
   sm: 'w-16',
   md: 'w-20',
   lg: 'w-24',
+  card: 'w-4/5',
 } as const;
 
 const PREVIEW_WIDTH_PX = {
   sm: 224,
   md: 288,
   lg: 320,
+  card: 320,
 } as const;
 
 type PortraitSize = keyof typeof SIZE_WIDTH;

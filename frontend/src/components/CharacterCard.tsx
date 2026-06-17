@@ -35,24 +35,24 @@ export function CharacterCard({
         <p className="text-sm text-straw/80 mb-2 font-medium">{displayName}</p>
       )}
       <motion.div
-        className="flex justify-center"
+        className="flex justify-center w-full"
         animate={hidden ? { rotateY: [0, 10, -10, 0] } : {}}
         transition={{ repeat: hidden ? Infinity : 0, duration: 3 }}
       >
         {hidden ? (
-          <CharacterPortraitSlot size="lg">
+          <CharacterPortraitSlot size="card">
             <span className="text-4xl font-bold text-straw">?</span>
           </CharacterPortraitSlot>
         ) : character ? (
           <CharacterPortrait
             name={characterName(character, language)}
             imageUrl={character.image_url}
-            size="lg"
+            size="card"
             initialsClassName="text-2xl"
             previewPlacement="below"
           />
         ) : (
-          <CharacterPortraitSlot size="lg">
+          <CharacterPortraitSlot size="card">
             <span className="text-2xl text-parchment/50">—</span>
           </CharacterPortraitSlot>
         )}
