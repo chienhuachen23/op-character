@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import type { ReactNode, ButtonHTMLAttributes } from 'react';
+import type { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from 'react';
+import { useEffect } from 'react';
 import { setUILanguage } from '../i18n';
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
@@ -48,7 +49,7 @@ export function Button({
 export function Input({
   className,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement>) {
+}: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className={clsx(
@@ -75,6 +76,59 @@ export function Select({
     >
       {children}
     </select>
+  );
+}
+
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/60"
+        aria-label="Close"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        className="relative z-10 w-full max-w-md rounded-2xl border border-straw/30 bg-ocean/95 backdrop-blur-md shadow-xl p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <h3 id="modal-title" className="font-bold text-lg text-straw mb-4 pr-8">
+          {title}
+        </h3>
+        <button
+          type="button"
+          className="absolute top-4 right-4 text-parchment/60 hover:text-parchment text-xl leading-none"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          ×
+        </button>
+        {children}
+      </div>
+    </div>
   );
 }
 

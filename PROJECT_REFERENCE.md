@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-16（v5）
+> 最后更新：2026-06-16（v6）
 
 ---
 
@@ -15,6 +15,11 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v5→v6）：**
+
+- **管理员人物筛选**：搜索框模糊匹配中英文名；可筛选「无图片」「未启用随机分配」；显示 `显示数 / 总数`
+- **管理员编辑弹窗**：新建/编辑人物改为 Modal 弹窗，无需滚回页面顶部；`components/ui.tsx` 新增 `Modal`；筛选逻辑 `features/admin/characterFilters.ts`
 
 **近期重要变更（v4→v5）：**
 
@@ -182,11 +187,13 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 - 登录：密钥存 `localStorage`（`admin_api_key`），请求头 `X-Admin-Key`
 - 未配置 `ADMIN_API_KEY` → `403 ADMIN_DISABLED`（「Admin API is disabled」）
 - 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
+- **搜索与筛选**：中英文模糊搜索；勾选「无图片」（无 `image_url` 或仍为种子 `/characters/one_piece/` 路径）、「未启用随机分配」（`is_active=false`）
+- **编辑 UX**：新建/编辑人物在 **Modal 弹窗**中完成（Esc / 遮罩关闭）；图片仍在卡片上拖放上传
 - 图片：拖到人物卡片或创建表单上传；`POST /admin/upload-image` → `media/characters/{theme_slug}/`；`image_url` **选填**（`catalog.0002`）
 - **CSV**：导出 `中文名,英文名`；导入为**增量**（仅新增行，不删不改已有）；`POST /admin/themes/{id}/characters/import`
 - 上传成功有绿色提示；列表即时刷新头像（勿依赖整页刷新）
 - 后端：`catalog/admin_views.py`、`admin_serializers.py`、`permissions.py`
-- 前端：`api/adminClient.ts`、`features/admin/*`、`features/admin/characterCsv.ts`
+- 前端：`api/adminClient.ts`、`features/admin/*`、`features/admin/characterCsv.ts`、`features/admin/characterFilters.ts`
 - **勿与** Django 内置 Admin 混淆：其在 **`/django-admin/`**；React CMS 在 **`/admin`**
 
 ### 5.4 分享链接流程
@@ -879,3 +886,5 @@ DEPLOY_RAILWAY.md
 | 对局人物重选 | 第三人确认后换角；`character_reroll_requests`；API + GameBoard UI |
 | seed 不覆盖图片 | `seed_one_piece` 仅新建角色写默认 `image_url` |
 | 管理员上传 UX | 成功提示 + 乐观更新头像；`CharacterPortrait` 重置 `failed` |
+| 管理员搜索筛选 | 中英文模糊搜索；无图/未启用筛选；`characterFilters.ts` |
+| 管理员编辑弹窗 | 新建/编辑 Modal；`components/ui.tsx` `Modal` |

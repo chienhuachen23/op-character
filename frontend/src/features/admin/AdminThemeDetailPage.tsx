@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -7,7 +7,7 @@ import {
   type AdminCharacter,
   type AdminTheme,
 } from '../../api/adminClient';
-import { Card, Button, Input } from '../../components/ui';
+import { Card, Button, Input, Modal } from '../../components/ui';
 import { CharacterPortrait } from '../../components/CharacterPortrait';
 import { characterName } from '../../i18n';
 import {
@@ -15,6 +15,7 @@ import {
   exportCharactersCsv,
   parseCharacterCsv,
 } from './characterCsv';
+import { filterCharacters } from './characterFilters';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
 
@@ -63,6 +64,9 @@ export function AdminThemeDetailPage() {
   const [pendingCreateImage, setPendingCreateImage] = useState<File | null>(null);
   const [importMessage, setImportMessage] = useState('');
   const [uploadMessage, setUploadMessage] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterNoImage, setFilterNoImage] = useState(false);
+  const [filterInactive, setFilterInactive] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name_zh: '',
@@ -303,6 +307,19 @@ export function AdminThemeDetailPage() {
 
   const lang = i18n.language;
 
+  const filteredCharacters = useMemo(
+    () =>
+      filterCharacters(characters, {
+        searchQuery,
+        onlyNoImage: filterNoImage,
+        onlyInactive: filterInactive,
+      }),
+    [characters, searchQuery, filterNoImage, filterInactive]
+  );
+
+  const isModalOpen = editingId !== null;
+  const isCreateMode = editingId === 0;
+
   if (!theme && !error) {
     return <p className="text-center py-12">{t('loading')}</p>;
   }
@@ -338,30 +355,58 @@ export function AdminThemeDetailPage() {
         </Button>
       </div>
 
-      {editingId !== null && (
+      <Card className="mb-6">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+          <div>
+            <label className="block text-sm text-parchment/70 mb-1.5">{t('adminCharacterSearch')}</label>
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('adminCharacterSearchPlaceholder')}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none py-2.5">
+            <input
+              type="checkbox"
+              checked={filterNoImage}
+              onChange={(e) => setFilterNoImage(e.target.checked)}
+            />
+            {t('adminFilterNoImage')}
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none py-2.5">
+            <input
+              type="checkbox"
+              checked={filterInactive}
+              onChange={(e) => setFilterInactive(e.target.checked)}
+            />
+            {t('adminFilterInactive')}
+          </label>
+        </div>
+        <p className="text-sm text-parchment/50 mt-3">
+          {t('adminFilterResultCount', { shown: filteredCharacters.length, total: characters.length })}
+        </p>
+      </Card>
+
+      <Modal
+        open={isModalOpen}
+        onClose={resetForm}
+        title={isCreateMode ? t('adminNewCharacter') : t('adminEditCharacter')}
+      >
         <div
-          onDragEnter={editingId === 0 ? handleCreateFormDragOver : undefined}
-          onDragOver={editingId === 0 ? handleCreateFormDragOver : undefined}
-          onDragLeave={editingId === 0 ? handleCreateFormDragLeave : undefined}
-          onDrop={editingId === 0 ? handleCreateFormDrop : undefined}
+          onDragEnter={isCreateMode ? handleCreateFormDragOver : undefined}
+          onDragOver={isCreateMode ? handleCreateFormDragOver : undefined}
+          onDragLeave={isCreateMode ? handleCreateFormDragLeave : undefined}
+          onDrop={isCreateMode ? handleCreateFormDrop : undefined}
+          className={clsx('relative', isCreateMode && dragOverCreateForm && 'ring-2 ring-straw rounded-xl')}
         >
-          <Card
-            className={clsx(
-              'mb-6 relative',
-              editingId === 0 && dragOverCreateForm && 'ring-2 ring-straw shadow-straw/30 shadow-lg'
-            )}
-          >
-          {editingId === 0 && dragOverCreateForm && (
-            <div className="absolute inset-0 z-10 rounded-2xl border-2 border-dashed border-straw bg-straw/15 flex items-center justify-center pointer-events-none">
+          {isCreateMode && dragOverCreateForm && (
+            <div className="absolute inset-0 z-10 rounded-xl border-2 border-dashed border-straw bg-straw/15 flex items-center justify-center pointer-events-none">
               <p className="text-sm font-semibold text-straw px-4 text-center">
                 {t('adminDropImageHint')}
               </p>
             </div>
           )}
-          <h3 className="font-bold mb-4">
-            {editingId === 0 ? t('adminNewCharacter') : t('adminEditCharacter')}
-          </h3>
-          {editingId === 0 && (
+          {isCreateMode && (
             <div className="flex flex-col items-center mb-4">
               {pendingCreateImage ? (
                 <PendingImagePreview
@@ -387,7 +432,7 @@ export function AdminThemeDetailPage() {
               )}
             </div>
           )}
-          <div className="grid md:grid-cols-2 gap-3 mb-3">
+          <div className="grid gap-3 mb-3">
             <Input
               value={form.name_zh}
               onChange={(e) => setForm((prev) => ({ ...prev, name_zh: e.target.value }))}
@@ -416,9 +461,8 @@ export function AdminThemeDetailPage() {
               {t('cancel')}
             </Button>
           </div>
-          </Card>
         </div>
-      )}
+      </Modal>
 
       {error && <p className="text-red-400 mb-4">{error}</p>}
       {uploadMessage && <p className="text-green-300 mb-4">{uploadMessage}</p>}
@@ -455,7 +499,7 @@ export function AdminThemeDetailPage() {
       />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {characters.map((character) => {
+        {filteredCharacters.map((character) => {
           const displayName = characterName(character, lang);
           const isDragOver = dragOverCharacterId === character.id;
           const isUploading = loading && uploadTargetId === character.id;
@@ -527,6 +571,9 @@ export function AdminThemeDetailPage() {
 
       {characters.length === 0 && !error && (
         <p className="text-center text-parchment/50 py-12">{t('adminNoCharacters')}</p>
+      )}
+      {characters.length > 0 && filteredCharacters.length === 0 && (
+        <p className="text-center text-parchment/50 py-12">{t('adminNoFilterResults')}</p>
       )}
     </div>
   );
