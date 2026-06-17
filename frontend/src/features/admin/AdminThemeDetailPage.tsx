@@ -27,6 +27,10 @@ function isImageFile(file: File): boolean {
   return IMAGE_EXTENSIONS.has(ext);
 }
 
+function collectImageFiles(files: FileList | File[]): File[] {
+  return Array.from(files).filter(isImageFile);
+}
+
 function acceptsFileDrop(e: DragEvent): boolean {
   const types = e.dataTransfer.types;
   return types.includes('Files') || types.some((type) => type.startsWith('image/'));
@@ -183,7 +187,13 @@ export function AdminThemeDetailPage() {
     return adminApi.addCharacterImage(characterId, file);
   };
 
-  const handleUpload = async (file: File, characterId: number) => {
+  const handleUploadMany = async (files: File[], characterId: number) => {
+    const imageFiles = collectImageFiles(files);
+    if (!imageFiles.length) {
+      setError(t('adminInvalidImageFile'));
+      return;
+    }
+
     const character = characters.find((item) => item.id === characterId);
     setLoading(true);
     setUploadTargetId(characterId);
@@ -191,7 +201,12 @@ export function AdminThemeDetailPage() {
     setUploadMessage('');
     setImportMessage('');
     try {
-      const updated = await uploadImageForCharacter(file, characterId);
+      let updated = null as Awaited<ReturnType<typeof uploadImageForCharacter>> | null;
+      for (const file of imageFiles) {
+        updated = await uploadImageForCharacter(file, characterId);
+      }
+      if (!updated) return;
+
       const displayName = character ? characterName(character, lang) : '';
       const imageCount = updated.image_count ?? updated.images?.length ?? 0;
       const uploadedId =
@@ -206,7 +221,12 @@ export function AdminThemeDetailPage() {
         window.setTimeout(() => setHighlightImageId(null), 2500);
       }
       if (displayName) {
-        setUploadMessage(t('adminUploadAdded', { name: displayName, count: imageCount }));
+        const added = imageFiles.length;
+        setUploadMessage(
+          added > 1
+            ? t('adminUploadAddedMany', { name: displayName, added, count: imageCount })
+            : t('adminUploadAdded', { name: displayName, count: imageCount })
+        );
       }
       setGalleryCharacterId(characterId);
     } catch (e) {
@@ -320,12 +340,12 @@ export function AdminThemeDetailPage() {
     setDragOverCharacterId(null);
     if (loading) return;
 
-    const file = Array.from(e.dataTransfer.files).find(isImageFile);
-    if (!file) {
+    const imageFiles = collectImageFiles(e.dataTransfer.files);
+    if (!imageFiles.length) {
       setError(t('adminInvalidImageFile'));
       return;
     }
-    void handleUpload(file, characterId);
+    void handleUploadMany(imageFiles, characterId);
   };
 
   const lang = i18n.language;
@@ -511,14 +531,15 @@ export function AdminThemeDetailPage() {
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const file = e.target.files?.[0];
+          const files = e.target.files ? Array.from(e.target.files) : [];
           const targetId = pendingUploadCharacterId.current;
           e.target.value = '';
           pendingUploadCharacterId.current = null;
-          if (file && targetId) {
-            void handleUpload(file, targetId);
+          if (files.length && targetId) {
+            void handleUploadMany(files, targetId);
           }
         }}
       />
