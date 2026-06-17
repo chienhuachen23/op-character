@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from .images import usable_admin_image_count
 from .models import Character, CharacterImage, GameMode, Theme
 
 
@@ -52,7 +53,7 @@ class AdminCharacterSerializer(serializers.ModelSerializer):
         fields = ["id", "name_zh", "name_en", "image_url", "images", "image_count", "is_active"]
 
     def get_image_count(self, obj):
-        return obj.images.count()
+        return usable_admin_image_count(obj)
 
 
 class AdminCharacterWriteSerializer(serializers.ModelSerializer):

@@ -385,7 +385,7 @@ export function AdminThemeDetailPage() {
       if (!updated) return;
 
       const displayName = character ? characterName(character, lang) : '';
-      const imageCount = updated.image_count ?? updated.images?.length ?? 0;
+      const imageCount = usableCharacterImages(updated).length;
       const uploadedId =
         'uploaded_image_id' in updated && typeof updated.uploaded_image_id === 'number'
           ? updated.uploaded_image_id
@@ -454,7 +454,7 @@ export function AdminThemeDetailPage() {
       }
 
       const displayName = character ? characterName(character, lang) : '';
-      const imageCount = updated.image_count ?? updated.images?.length ?? 0;
+      const imageCount = usableCharacterImages(updated).length;
       const uploadedId =
         'uploaded_image_id' in updated && typeof updated.uploaded_image_id === 'number'
           ? updated.uploaded_image_id

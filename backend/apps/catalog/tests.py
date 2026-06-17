@@ -80,10 +80,9 @@ class CharacterImageTest(TestCase):
         self.character.image_url = "/media/legacy-only.jpg"
         self.character.save(update_fields=["image_url"])
 
-        from apps.catalog.admin_views import AdminCharacterImageUploadView
+        from apps.catalog.images import ensure_legacy_image_in_gallery
 
-        view = AdminCharacterImageUploadView()
-        view._ensure_legacy_image_in_gallery(self.character)
+        ensure_legacy_image_in_gallery(self.character)
         CharacterImage.objects.create(
             character=self.character,
             image_url="/media/new.jpg",
@@ -94,3 +93,14 @@ class CharacterImageTest(TestCase):
         self.assertEqual(len(urls), 2)
         self.assertIn("/media/legacy-only.jpg", urls)
         self.assertIn("/media/new.jpg", urls)
+
+    def test_seed_legacy_image_not_copied_into_gallery(self):
+        self.character.images.all().delete()
+        self.character.image_url = "/characters/one_piece/luffy.svg"
+        self.character.save(update_fields=["image_url"])
+
+        from apps.catalog.images import ensure_legacy_image_in_gallery, usable_admin_image_count
+
+        ensure_legacy_image_in_gallery(self.character)
+        self.assertEqual(self.character.images.count(), 0)
+        self.assertEqual(usable_admin_image_count(self.character), 0)

@@ -17,6 +17,7 @@ from .admin_serializers import (
     AdminThemeSerializer,
     AdminThemeWriteSerializer,
 )
+from .images import ensure_legacy_image_in_gallery
 from .models import Character, CharacterImage, Theme
 from .permissions import AdminAPIKeyPermission
 
@@ -200,25 +201,13 @@ class AdminCharacterImageUploadView(APIView):
             raise GameAPIException("NOT_FOUND", "Character not found", 404)
         return character
 
-    def _ensure_legacy_image_in_gallery(self, character: Character):
-        legacy = (character.image_url or "").strip()
-        if not legacy:
-            return
-        if character.images.filter(image_url=legacy).exists():
-            return
-        CharacterImage.objects.create(
-            character=character,
-            image_url=legacy,
-            sort_order=character.images.count(),
-        )
-
     def post(self, request, character_id):
         uploaded = request.FILES.get("file")
         if not uploaded:
             raise GameAPIException("INVALID_REQUEST", "No file uploaded", 400)
 
         character = self.get_character(character_id)
-        self._ensure_legacy_image_in_gallery(character)
+        ensure_legacy_image_in_gallery(character)
         url = AdminImageUploadView()._save_upload(uploaded, character.theme.slug)
         next_order = character.images.count()
         new_image = CharacterImage.objects.create(
@@ -256,18 +245,6 @@ class AdminCharacterImageFromUrlView(APIView):
         if not character:
             raise GameAPIException("NOT_FOUND", "Character not found", 404)
         return character
-
-    def _ensure_legacy_image_in_gallery(self, character: Character):
-        legacy = (character.image_url or "").strip()
-        if not legacy:
-            return
-        if character.images.filter(image_url=legacy).exists():
-            return
-        CharacterImage.objects.create(
-            character=character,
-            image_url=legacy,
-            sort_order=character.images.count(),
-        )
 
     def _sniff_image_content_type(self, data: bytes) -> str | None:
         if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
@@ -325,7 +302,7 @@ class AdminCharacterImageFromUrlView(APIView):
             raise GameAPIException("INVALID_REQUEST", "url is required", 400)
 
         character = self.get_character(character_id)
-        self._ensure_legacy_image_in_gallery(character)
+        ensure_legacy_image_in_gallery(character)
         image_bytes, content_type = self._fetch_image(url)
         ext = self._extension_for(url, content_type)
         filename = f"{uuid.uuid4().hex}{ext}"
