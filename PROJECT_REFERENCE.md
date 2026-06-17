@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-16（v6）
+> 最后更新：2026-06-17（v7）
 
 ---
 
@@ -15,6 +15,11 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v6→v7）：**
+
+- **人物肖像交互**：游戏人物卡内肖像居中；管理员页与游戏页悬浮肖像显示放大预览（`CharacterPortrait` `hoverPreview`）
+- **部署诊断日志**：`start.sh` 启动后输出 `Database ready: N characters in catalog` 便于确认 Volume 持久化
 
 **近期重要变更（v5→v6）：**
 
@@ -613,7 +618,8 @@ python manage.py seed_one_piece
 ### 10.3 人物肖像
 
 - 共享组件：`frontend/src/components/CharacterPortrait.tsx`（`CharacterCard`、管理员页共用）
-- 圆角矩形 **aspect-ratio 5:7**（海贼王卡牌比例），`object-cover`
+- 圆角矩形 **aspect-ratio 5:7**（海贼王卡牌比例），`object-cover object-center`；游戏 `CharacterCard` 内 `flex justify-center` 居中
+- **悬浮放大**：有图片时鼠标悬停显示更大预览（默认 `hoverPreview=true`）；`cursor-zoom-in`
 - `image_url` 有值时显示图片（`resolveMediaUrl`）；加载失败回退色块 + 名字前两字
 - 管理员上传后 `imageUrl` 变化须重置 `failed` 状态（已实现 `useEffect`）
 - 种子默认路径 `/characters/one_piece/*.svg` 可能 404；管理员上传 `/media/...` 正常
@@ -888,3 +894,4 @@ DEPLOY_RAILWAY.md
 | 管理员上传 UX | 成功提示 + 乐观更新头像；`CharacterPortrait` 重置 `failed` |
 | 管理员搜索筛选 | 中英文模糊搜索；无图/未启用筛选；`characterFilters.ts` |
 | 管理员编辑弹窗 | 新建/编辑 Modal；`components/ui.tsx` `Modal` |
+| 肖像悬浮放大 | `CharacterPortrait` hover 预览；游戏卡内居中 |

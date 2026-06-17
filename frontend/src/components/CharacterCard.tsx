@@ -35,7 +35,7 @@ export function CharacterCard({
         <p className="text-sm text-straw/80 mb-2 font-medium">{displayName}</p>
       )}
       <motion.div
-        className="mx-auto"
+        className="flex justify-center"
         animate={hidden ? { rotateY: [0, 10, -10, 0] } : {}}
         transition={{ repeat: hidden ? Infinity : 0, duration: 3 }}
       >

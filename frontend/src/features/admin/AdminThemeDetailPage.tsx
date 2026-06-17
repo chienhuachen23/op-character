@@ -531,7 +531,7 @@ export function AdminThemeDetailPage() {
                   <p className="text-sm font-medium text-straw">{t('loading')}</p>
                 </div>
               )}
-              <div className="flex flex-col items-center text-center">
+              <div className="flex flex-col items-center text-center overflow-visible">
                 <CharacterPortrait
                   key={portraitKey}
                   imageUrl={character.image_url}
