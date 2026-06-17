@@ -15,7 +15,9 @@ import {
   exportCharactersCsv,
   parseCharacterCsv,
 } from './characterCsv';
-import { filterCharacters, characterCoverImageUrl, usableCharacterImages } from './characterFilters';
+import { filterCharacters, usableCharacterImages } from './characterFilters';
+import { AdminCharacterImageStack } from './AdminCharacterImageStack';
+import { AdminCharacterGalleryModal } from './AdminCharacterGalleryModal';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
 
@@ -65,6 +67,7 @@ export function AdminThemeDetailPage() {
   const [importMessage, setImportMessage] = useState('');
   const [uploadMessage, setUploadMessage] = useState('');
   const [highlightImageId, setHighlightImageId] = useState<number | null>(null);
+  const [galleryCharacterId, setGalleryCharacterId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterNoImage, setFilterNoImage] = useState(false);
   const [filterInactive, setFilterInactive] = useState(false);
@@ -205,6 +208,7 @@ export function AdminThemeDetailPage() {
       if (displayName) {
         setUploadMessage(t('adminUploadAdded', { name: displayName, count: imageCount }));
       }
+      setGalleryCharacterId(characterId);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -338,6 +342,9 @@ export function AdminThemeDetailPage() {
 
   const isModalOpen = editingId !== null;
   const isCreateMode = editingId === 0;
+  const galleryCharacter = galleryCharacterId
+    ? characters.find((item) => item.id === galleryCharacterId) ?? null
+    : null;
 
   if (!theme && !error) {
     return <p className="text-center py-12">{t('loading')}</p>;
@@ -483,6 +490,19 @@ export function AdminThemeDetailPage() {
         </div>
       </Modal>
 
+      <AdminCharacterGalleryModal
+        character={galleryCharacter}
+        language={lang}
+        loading={loading}
+        highlightImageId={highlightImageId}
+        onClose={() => setGalleryCharacterId(null)}
+        onDeleteImage={(characterId, imageId) => void handleDeleteImage(characterId, imageId)}
+        onAddImage={(characterId) => {
+          pendingUploadCharacterId.current = characterId;
+          fileInputRef.current?.click();
+        }}
+      />
+
       {error && <p className="text-red-400 mb-4">{error}</p>}
       {uploadMessage && <p className="text-green-300 mb-4">{uploadMessage}</p>}
       {importMessage && <p className="text-green-300 mb-4">{importMessage}</p>}
@@ -522,10 +542,8 @@ export function AdminThemeDetailPage() {
           const displayName = characterName(character, lang);
           const isDragOver = dragOverCharacterId === character.id;
           const isUploading = loading && uploadTargetId === character.id;
-          const coverUrl = characterCoverImageUrl(character);
           const galleryImages = usableCharacterImages(character);
           const imageCount = galleryImages.length;
-          const portraitKey = `${character.id}:${imageCount}:${character.images?.map((image) => image.id).join(',') ?? ''}`;
           return (
             <div
               key={character.id}
@@ -554,66 +572,21 @@ export function AdminThemeDetailPage() {
                 </div>
               )}
               <div className="flex flex-col items-center text-center overflow-visible">
-                <div className="relative">
-                  <CharacterPortrait
-                    key={portraitKey}
-                    imageUrl={coverUrl}
-                    name={displayName}
-                    size="md"
-                  />
-                  {imageCount > 1 && (
-                    <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-straw text-wood text-xs font-bold flex items-center justify-center">
-                      {imageCount}
-                    </span>
-                  )}
-                </div>
+                <AdminCharacterImageStack
+                  name={displayName}
+                  images={galleryImages}
+                  onOpenGallery={() => setGalleryCharacterId(character.id)}
+                />
                 <p className="font-bold mt-3">{character.name_zh}</p>
                 <p className="text-sm text-parchment/70">{character.name_en}</p>
                 {imageCount > 0 && (
                   <p className="text-xs text-parchment/50 mt-1">
                     {t('adminImageCount', { count: imageCount })}
+                    <span className="block text-parchment/40">{t('adminClickToManageImages')}</span>
                   </p>
                 )}
                 {!character.is_active && (
                   <p className="text-xs text-red-300 mt-1">{t('adminCharacterInactive')}</p>
-                )}
-                {galleryImages.length > 0 && (
-                  <div className="mt-3 w-full">
-                    <p className="text-xs text-parchment/50 mb-2">{t('adminAllImages')}</p>
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {galleryImages.map((image) => {
-                        const isNew = highlightImageId === image.id;
-                        const isLatest =
-                          galleryImages[galleryImages.length - 1]?.id === image.id;
-                        return (
-                          <div key={image.id} className="relative">
-                            <CharacterPortrait
-                              imageUrl={image.image_url}
-                              name={displayName}
-                              size="sm"
-                              className={clsx(
-                                isNew && 'ring-2 ring-green-400',
-                                isLatest && !isNew && imageCount > 1 && 'ring-2 ring-straw/60'
-                              )}
-                            />
-                            {isLatest && imageCount > 1 && (
-                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] px-1 rounded bg-straw/90 text-wood whitespace-nowrap">
-                                {t('adminLatestImage')}
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-600 text-white text-xs leading-none hover:bg-red-500"
-                              onClick={() => void handleDeleteImage(character.id, image.id)}
-                              aria-label={t('delete')}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
                 )}
               </div>
               <div className="flex flex-wrap gap-2 mt-4">

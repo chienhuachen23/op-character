@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-17（v9）
+> 最后更新：2026-06-17（v10）
 
 ---
 
@@ -15,6 +15,10 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v9→v10）：**
+
+- **管理员多图卡片 UI**：多张图叠加展示 + 右上角数量角标；悬停显示第一张放大图；点击打开图片管理弹窗（网格预览、悬停放大、单张删除）
 
 **近期重要变更（v8→v9）：**
 
@@ -205,7 +209,7 @@ daphne -b 0.0.0.0 -p 8000 config.asgi:application
 - 页面：`/admin` 登录 → `/admin/themes` 主题列表 → `/admin/themes/:id` 人物网格
 - **搜索与筛选**：中英文模糊搜索；勾选「无图片」（图库无有效图且无有效 `image_url`）、「未启用随机分配」（`is_active=false`）
 - **编辑 UX**：新建/编辑人物在 **Modal 弹窗**中完成（Esc / 遮罩关闭）
-- **多图管理**：人物卡片显示封面 + 缩略图网格 + 数量角标；拖放/「添加图片」**追加**不覆盖；每张可单独删除
+- **多图管理**：人物卡片显示**叠加肖像**（≥2 张）+ 数量角标；点击打开 `AdminCharacterGalleryModal` 管理全部图片（悬停放大、× 删除）；拖放/「添加图片」追加
 - 图片存储：`POST /admin/characters/{id}/images` → `media/characters/{theme_slug}/`；`Character.image_url` 保留为封面（最新一张，兼容旧逻辑）
 - **CSV**：导出 `中文名,英文名`；导入为**增量**（仅新增行，不删不改已有）；`POST /admin/themes/{id}/characters/import`
 - 上传成功有绿色提示；列表即时刷新头像（勿依赖整页刷新）
