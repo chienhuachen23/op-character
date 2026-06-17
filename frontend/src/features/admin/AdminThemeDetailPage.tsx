@@ -42,6 +42,52 @@ function acceptsFileDrop(e: DragEvent): boolean {
   );
 }
 
+function decodeHtmlAttr(value: string): string {
+  const el = document.createElement('textarea');
+  el.innerHTML = value;
+  return el.value;
+}
+
+function resolveDroppedUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
+  try {
+    return new URL(trimmed, window.location.href).href;
+  } catch {
+    return trimmed;
+  }
+}
+
+function collectFilesFromItems(dt: DataTransfer): File[] {
+  const files: File[] = [];
+  if (!dt.items) return files;
+  for (let i = 0; i < dt.items.length; i++) {
+    const item = dt.items[i];
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file && isImageFile(file)) files.push(file);
+    }
+  }
+  return files;
+}
+
+function mergeImageFiles(...groups: File[][]): File[] {
+  const merged: File[] = [];
+  for (const group of groups) {
+    for (const file of group) {
+      const duplicate = merged.some(
+        (existing) =>
+          existing.name === file.name &&
+          existing.size === file.size &&
+          existing.lastModified === file.lastModified
+      );
+      if (!duplicate) merged.push(file);
+    }
+  }
+  return merged;
+}
+
 function parseDroppedImageUrls(dt: DataTransfer): string[] {
   const urls: string[] = [];
   const uriList = dt.getData('text/uri-list');
@@ -53,7 +99,7 @@ function parseDroppedImageUrls(dt: DataTransfer): string[] {
   }
 
   const textPlain = dt.getData('text/plain').trim();
-  if (textPlain && /^https?:\/\//i.test(textPlain)) {
+  if (textPlain && /^(https?:\/\/|data:|blob:)/i.test(textPlain)) {
     urls.push(textPlain);
   }
 
@@ -61,12 +107,24 @@ function parseDroppedImageUrls(dt: DataTransfer): string[] {
   if (html) {
     const matches = html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi);
     for (const match of matches) {
-      const value = (match[1] || '').trim();
+      const value = decodeHtmlAttr((match[1] || '').trim());
       if (value) urls.push(value);
     }
   }
 
-  return Array.from(new Set(urls));
+  return Array.from(new Set(urls.map(resolveDroppedUrl)));
+}
+
+interface DropPayload {
+  files: File[];
+  urls: string[];
+}
+
+function captureDropPayload(dt: DataTransfer): DropPayload {
+  return {
+    files: mergeImageFiles(collectImageFiles(dt.files), collectFilesFromItems(dt)),
+    urls: parseDroppedImageUrls(dt),
+  };
 }
 
 function extFromMimeType(type: string): string {
@@ -78,7 +136,31 @@ function extFromMimeType(type: string): string {
   return '';
 }
 
+function fileFromDataUrl(dataUrl: string, index: number): File | null {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (!match) return null;
+  const mime = (match[1] || 'application/octet-stream').trim();
+  if (!mime.startsWith('image/')) return null;
+  const isBase64 = Boolean(match[2]);
+  const body = match[3];
+  try {
+    const bytes = isBase64
+      ? Uint8Array.from(atob(body.replace(/\s/g, '')), (char) => char.charCodeAt(0))
+      : new TextEncoder().encode(decodeURIComponent(body));
+    const blob = new Blob([bytes], { type: mime });
+    const ext = extFromMimeType(mime);
+    const file = new File([blob], `dropped-image-${Date.now()}-${index}${ext}`, { type: mime });
+    return isImageFile(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 async function imageFileFromUrl(url: string, index: number): Promise<File | null> {
+  if (url.startsWith('data:')) {
+    return fileFromDataUrl(url, index);
+  }
+
   try {
     const response = await fetch(url);
     if (!response.ok) return null;
@@ -103,12 +185,25 @@ async function imageFileFromUrl(url: string, index: number): Promise<File | null
   }
 }
 
-async function collectDroppedImages(dt: DataTransfer): Promise<File[]> {
-  const localFiles = collectImageFiles(dt.files);
-  const urlFiles = await Promise.all(
-    parseDroppedImageUrls(dt).map((url, index) => imageFileFromUrl(url, index))
-  );
-  return [...localFiles, ...urlFiles.filter((item): item is File => !!item)];
+async function resolveDroppedImages(
+  payload: DropPayload
+): Promise<{ files: File[]; remoteUrls: string[] }> {
+  const files = [...payload.files];
+  const remoteUrls: string[] = [];
+
+  for (let index = 0; index < payload.urls.length; index++) {
+    const url = payload.urls[index];
+    const file = await imageFileFromUrl(url, index);
+    if (file) {
+      files.push(file);
+      continue;
+    }
+    if (/^https?:\/\//i.test(url)) {
+      remoteUrls.push(url);
+    }
+  }
+
+  return { files: mergeImageFiles(files), remoteUrls: Array.from(new Set(remoteUrls)) };
 }
 
 function PendingImagePreview({ file, alt }: { file: File; alt: string }) {
@@ -312,6 +407,62 @@ export function AdminThemeDetailPage() {
     }
   };
 
+  const processCharacterDrop = async (payload: DropPayload, characterId: number) => {
+    const { files, remoteUrls } = await resolveDroppedImages(payload);
+    if (!files.length && !remoteUrls.length) {
+      setError(t('adminInvalidImageFile'));
+      return;
+    }
+
+    const character = characters.find((item) => item.id === characterId);
+    setLoading(true);
+    setUploadTargetId(characterId);
+    setError('');
+    setUploadMessage('');
+    setImportMessage('');
+    try {
+      let updated = null as Awaited<ReturnType<typeof uploadImageForCharacter>> | null;
+      for (const file of files) {
+        updated = await uploadImageForCharacter(file, characterId);
+      }
+      for (const url of remoteUrls) {
+        updated = await adminApi.addCharacterImageFromUrl(characterId, url);
+      }
+      if (!updated) {
+        setError(t('adminDropImageFetchFailed'));
+        return;
+      }
+
+      const displayName = character ? characterName(character, lang) : '';
+      const imageCount = updated.image_count ?? updated.images?.length ?? 0;
+      const uploadedId =
+        'uploaded_image_id' in updated && typeof updated.uploaded_image_id === 'number'
+          ? updated.uploaded_image_id
+          : updated.images?.[updated.images.length - 1]?.id ?? null;
+      setCharacters((prev) =>
+        prev.map((item) => (item.id === characterId ? updated : item))
+      );
+      if (uploadedId) {
+        setHighlightImageId(uploadedId);
+        window.setTimeout(() => setHighlightImageId(null), 2500);
+      }
+      if (displayName) {
+        const added = files.length + remoteUrls.length;
+        setUploadMessage(
+          added > 1
+            ? t('adminUploadAddedMany', { name: displayName, added, count: imageCount })
+            : t('adminUploadAdded', { name: displayName, count: imageCount })
+        );
+      }
+      setGalleryCharacterId(characterId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploadTargetId(null);
+      setLoading(false);
+    }
+  };
+
   const handleDeleteImage = async (characterId: number, imageId: number) => {
     if (!window.confirm(t('adminDeleteImageConfirm'))) return;
     setLoading(true);
@@ -342,17 +493,20 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const handleCreateFormDrop = async (e: DragEvent<HTMLDivElement>) => {
+  const handleCreateFormDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOverCreateForm(false);
-    const files = await collectDroppedImages(e.dataTransfer);
-    const file = files[0];
-    if (!file) {
-      setError(t('adminInvalidImageFile'));
-      return;
-    }
-    setPendingCreateImage(file);
-    setError('');
+    const payload = captureDropPayload(e.dataTransfer);
+    void (async () => {
+      const { files } = await resolveDroppedImages(payload);
+      const file = files[0];
+      if (!file) {
+        setError(t('adminInvalidImageFile'));
+        return;
+      }
+      setPendingCreateImage(file);
+      setError('');
+    })();
   };
 
   const handleExport = () => {
@@ -411,17 +565,13 @@ export function AdminThemeDetailPage() {
     }
   };
 
-  const handleCardDrop = async (e: DragEvent<HTMLDivElement>, characterId: number) => {
+  const handleCardDrop = (e: DragEvent<HTMLDivElement>, characterId: number) => {
     e.preventDefault();
     setDragOverCharacterId(null);
     if (loading) return;
 
-    const imageFiles = await collectDroppedImages(e.dataTransfer);
-    if (!imageFiles.length) {
-      setError(t('adminInvalidImageFile'));
-      return;
-    }
-    void handleUploadMany(imageFiles, characterId);
+    const payload = captureDropPayload(e.dataTransfer);
+    void processCharacterDrop(payload, characterId);
   };
 
   const lang = i18n.language;

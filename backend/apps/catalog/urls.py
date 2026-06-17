@@ -5,6 +5,7 @@ from .admin_views import (
     AdminCharacterBulkImportView,
     AdminCharacterDetailView,
     AdminCharacterImageDeleteView,
+    AdminCharacterImageFromUrlView,
     AdminCharacterImageUploadView,
     AdminCharacterListCreateView,
     AdminImageUploadView,
@@ -38,6 +39,11 @@ urlpatterns = [
         "admin/characters/<int:character_id>/images",
         AdminCharacterImageUploadView.as_view(),
         name="admin-character-image-upload",
+    ),
+    path(
+        "admin/characters/<int:character_id>/images/from-url",
+        AdminCharacterImageFromUrlView.as_view(),
+        name="admin-character-image-from-url",
     ),
     path(
         "admin/characters/<int:character_id>/images/<int:image_id>",

@@ -162,6 +162,15 @@ export const adminApi = {
     );
   },
 
+  addCharacterImageFromUrl: (characterId: number, url: string) =>
+    adminFetch<AdminCharacter & { uploaded_image_id?: number }>(
+      `/admin/characters/${characterId}/images/from-url`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+      }
+    ),
+
   deleteCharacterImage: (characterId: number, imageId: number) =>
     adminFetch<AdminCharacter>(`/admin/characters/${characterId}/images/${imageId}`, {
       method: 'DELETE',

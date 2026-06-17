@@ -1,6 +1,9 @@
 import os
 import uuid
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -224,6 +227,99 @@ class AdminCharacterImageUploadView(APIView):
             sort_order=next_order,
         )
         character.image_url = url
+        character.save(update_fields=["image_url"])
+        character = self.get_character(character_id)
+        data = AdminCharacterSerializer(character).data
+        data["uploaded_image_id"] = new_image.id
+        return Response(data, status=201)
+
+
+class AdminCharacterImageFromUrlView(APIView):
+    permission_classes = [AdminAPIKeyPermission]
+    ALLOWED_EXTENSIONS = AdminImageUploadView.ALLOWED_EXTENSIONS
+    MAX_BYTES = 10 * 1024 * 1024
+    MIME_TO_EXT = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    }
+
+    def get_character(self, character_id):
+        character = (
+            Character.objects.select_related("theme")
+            .prefetch_related("images")
+            .filter(id=character_id)
+            .first()
+        )
+        if not character:
+            raise GameAPIException("NOT_FOUND", "Character not found", 404)
+        return character
+
+    def _ensure_legacy_image_in_gallery(self, character: Character):
+        legacy = (character.image_url or "").strip()
+        if not legacy:
+            return
+        if character.images.filter(image_url=legacy).exists():
+            return
+        CharacterImage.objects.create(
+            character=character,
+            image_url=legacy,
+            sort_order=character.images.count(),
+        )
+
+    def _fetch_image(self, url: str) -> tuple[bytes, str]:
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in ("http", "https"):
+            raise GameAPIException("INVALID_REQUEST", "Only http(s) URLs are supported", 400)
+
+        request = Request(url.strip(), headers={"User-Agent": "OP-Character-Admin/1.0"})
+        try:
+            with urlopen(request, timeout=15) as response:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                data = response.read(self.MAX_BYTES + 1)
+        except Exception as exc:
+            raise GameAPIException(
+                "INVALID_REQUEST",
+                "Could not fetch image from URL",
+                400,
+            ) from exc
+
+        if len(data) > self.MAX_BYTES:
+            raise GameAPIException("INVALID_FILE", "Image too large", 400)
+        if not content_type.startswith("image/"):
+            raise GameAPIException("INVALID_FILE", "URL did not return an image", 400)
+        return data, content_type
+
+    def _extension_for(self, url: str, content_type: str) -> str:
+        ext = os.path.splitext(urlparse(url).path)[1].lower()
+        if ext in self.ALLOWED_EXTENSIONS:
+            return ext
+        mime_ext = self.MIME_TO_EXT.get(content_type)
+        if mime_ext:
+            return mime_ext
+        raise GameAPIException("INVALID_FILE", "Unsupported image type", 400)
+
+    def post(self, request, character_id):
+        url = (request.data.get("url") or "").strip()
+        if not url:
+            raise GameAPIException("INVALID_REQUEST", "url is required", 400)
+
+        character = self.get_character(character_id)
+        self._ensure_legacy_image_in_gallery(character)
+        image_bytes, content_type = self._fetch_image(url)
+        ext = self._extension_for(url, content_type)
+        filename = f"{uuid.uuid4().hex}{ext}"
+        uploaded = ContentFile(image_bytes, name=filename)
+        stored_url = AdminImageUploadView()._save_upload(uploaded, character.theme.slug)
+        next_order = character.images.count()
+        new_image = CharacterImage.objects.create(
+            character=character,
+            image_url=stored_url,
+            sort_order=next_order,
+        )
+        character.image_url = stored_url
         character.save(update_fields=["image_url"])
         character = self.get_character(character_id)
         data = AdminCharacterSerializer(character).data
