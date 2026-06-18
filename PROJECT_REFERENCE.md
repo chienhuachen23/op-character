@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-18（v11）
+> 最后更新：2026-06-19（v12）
 
 ---
 
@@ -15,6 +15,16 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v11→v12）：**
+
+- **放弃猜测也 reveal**：`self.character` 在 `verdict=correct` **或** `skipped` 时返回；前端显示「已放弃猜测，人物已揭晓」
+- **提示/猜测输入合并**：`GameBoard` 单卡 Tab 切换「发送提示」/「猜测身份」，避免误把猜测答案发到提示框；猜对/放弃后自动切回提示模式
+- **提示软撤回**：`DELETE /hints/{id}` 将 `is_withdrawn=true`（非物理删除）；列表保留并显示删除线；已撤回不参与 rating 计票/计分
+- **提示列表全量展示**：移除 `max-h-48 overflow-y-auto`，多条提示完整展开
+- **评价阶段显示自己的提示**：rating 页新增「你发出的提示」只读区块（`yourHints`）；他人提示仍在 `hint_rating_groups` 评价
+- **迁移**：`rooms.0010_hint_is_withdrawn`（`hints.is_withdrawn`）
+- **i18n**：`actionModeHint`、`actionModeGuess`、`withdrawHint`、`guessSkippedReveal`；修复英文 `guessCorrect`
 
 **近期重要变更（v10→v11）：**
 
@@ -72,7 +82,7 @@
 **OP Character** 是一个三人派对网页游戏（MVP 已实现第一个模式「人物共性猜谜」）。
 
 - 主题：海贼王（One Piece），数据库预留多主题扩展
-- 玩法：每人分配秘密人物；默认**看不到自己的人物**；能看到另外两人的人物；描述另外两人角色的共同点发提示；**文本输入**猜自己是谁；另外两人实时评判；猜对后自己人物 reveal；可继续发提示；轮末对提示点赞/点踩
+- 玩法：每人分配秘密人物；默认**看不到自己的人物**；能看到另外两人的人物；描述另外两人角色的共同点发提示；**文本输入**猜自己是谁；另外两人实时评判；猜对或**放弃猜测**后自己人物 reveal；可继续发提示；轮末对提示点赞/点踩
 - 模式：合作（cooperative）或对抗（competitive）
 - 身份：无注册，昵称 + UUID `player_token`（存 localStorage）
 - 语言：每位玩家独立选择 `zh` / `en`，UI 与人物名按玩家语言显示
@@ -257,14 +267,14 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 
 | 行为 | 说明 |
 |---|---|
-| 发提示 | 随时可发，可多条；分区显示「发送的提示」「收到的提示」 |
-| 文本猜人物 | 输入框提交 `{text}`，非下拉选角色 |
+| 发提示 | 随时可发，可多条；分区显示「发送的提示」「收到的提示」；**可撤回**（软删除 + 删除线，见 §6.5.2） |
+| 文本猜人物 | 输入框提交 `{text}`，非下拉选角色；与发提示**同卡 Tab 切换**，避免误输入 |
 | 他人评判 | 提交猜测后，另外两人**在同一页面**看到并投票 |
 | 猜对 reveal | `self.character` 对该玩家可见，人物卡从 `?` 变为真实人物 |
 | 猜错重试 | 两人都判错 → `verdict=incorrect` → 可再次输入；**历史错误答案**记入 `guess_history` 并展示 |
-| 等待评判 | `verdict=pending` 时不可重复提交 |
-| 猜对后继续 | 仍可发提示；不可再次猜测 |
-| 放弃 | `{skip:true}`，本轮不再猜测 |
+| 等待评判 | `verdict=pending` 时不可重复提交；操作卡自动切到猜测状态展示等待文案 |
+| 猜对后继续 | 仍可发提示；不可再次猜测；操作卡默认提示 Tab |
+| 放弃 | `{skip:true}`，本轮不再猜测；**同样 reveal 自己人物**（与猜对一致） |
 | **人物重选** | 玩家 A 为 B 点「重选」→ 玩家 C 确认 → B 换新角色；删 B 当轮 Guess；同时仅 1 个 pending 申请 |
 
 ### 6.4 轮次结束条件
@@ -280,7 +290,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 ### 6.4.1 每轮人物重新分配
 
 - 每轮 `complete` 结算后、进入下一轮前：`CharacterAssigner.assign(match)` **覆盖** `match_player_assignments`
-- 新轮自己人物重新隐藏（`self.character=null`），需再次猜对才 reveal
+- 新轮自己人物重新隐藏（`self.character=null`），需再次猜对或 skip 才 reveal
 - 轮末 `_snapshot_round_assignments()` 将当轮三人人物写入 `rounds.assignments_snapshot`（供终局复盘）
 
 ### 6.5 提示显示规则（个性化）
@@ -293,10 +303,10 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 | 1 | 收到的提示 | 您的人物和 {3昵称} 的人物 {3人物名} 的联系为：{内容} |
 | 3 | 收到的提示 | 您的人物和 {1昵称} 的人物 {1人物名} 的联系为：{内容} |
 
-- 后端：`TraitGuessEngine._format_hints_for_viewer()`
-- 前端：`GameBoard.formatHintText()`，兜底用 `state.others` 补全昵称/人物名
-- **收到的提示**：按作者分左右两卡，同一玩家多条提示合并在一张卡内
-- i18n：`hintOwn`、`hintForYou`、`hintsSent`、`hintsFromOthers`
+- 后端：`TraitGuessEngine._format_hints_for_viewer()`（含 `is_withdrawn`）
+- 前端：`GameBoard.formatHintText()` + `HintText` 组件（撤回时 `line-through`），兜底用 `state.others` 补全昵称/人物名
+- **收到的提示**：按作者分左右两卡，同一玩家多条提示合并在一张卡内；**无高度截断**，全部展开
+- i18n：`hintOwn`、`hintForYou`、`hintsSent`、`hintsFromOthers`、`withdrawHint`
 
 ### 6.5.1 评价阶段（rating）UI
 
@@ -305,11 +315,20 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 | 字段 | 说明 |
 |---|---|
 | `round_result` | 本轮猜测结果、合作是否得分、对战累计分与**待结算猜对分** |
-| `hint_rating_groups` | 按作者聚合的提示 + 当前玩家是否已评 |
+| `hint_rating_groups` | 按作者聚合的**未撤回**提示 + 当前玩家是否已评 |
 
 - 合作：显示本轮是否「合作成功」
 - 对战：显示截至上轮累计分 + 绿色 `+n`（仅猜对得分，**不含**尚未完成的提示评价分）
 - 猜测区展示 `guess_history`（猜错记录 + 评判者昵称文案）
+- **你发出的提示**：rating 页单独卡片展示本人全部提示（含已撤回，删除线样式）；**不可自评**
+
+### 6.5.2 提示撤回（软删除）
+
+- 活跃期内作者可 `DELETE /hints/{id}` 撤回**自己的**提示
+- 数据库保留记录，`hints.is_withdrawn=true`；API 返回 `is_withdrawn: true`
+- UI：提示不消失，正文显示**删除线** + 半透明；已撤回项隐藏「撤回」按钮
+- **rating 阶段**：已撤回提示仍可在「你发出的提示」/历史列表中显示（删除线）；**不参与** `hint_rating_groups`、不计入 `_check_rating_complete` 的 author 列表、不可被点赞点踩
+- 重复撤回 → `409 ALREADY_WITHDRAWN`；非作者 → `403 NOT_AUTHOR`
 
 ### 6.6 猜测显示与评判
 
@@ -326,14 +345,14 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 - API：`POST /rounds/current/author-hint-ratings` `{author_id, rating:"like"|"dislike"}`
 - 兼容：`POST /hints/{id}/ratings` 仍可用，内部转为评该 hint 的作者
 - 对抗计分：作者收到的赞/踩数 × 分值，在 `settlement` 结算
-- 完成条件：每个发过提示的玩家都收到 `玩家数-1` 条评价
+- 完成条件：每个**发过未撤回提示**的玩家都收到 `玩家数-1` 条评价（仅 `is_withdrawn=false` 的 author 计入）
 
 ### 6.7 隐私与 reveal 规则
 
 | 字段 | 规则 |
 |---|---|
 | `others[].character` | 对局开始后可见 |
-| `self.character` | 默认 `null`；**本轮猜对后**返回 assignment 人物 |
+| `self.character` | 默认 `null`；**本轮猜对或 skip 后**返回 assignment 人物 |
 | 终局 summary | `get_summary()` **每次从 DB 重建**（不用陈旧 `match.result` 缓存） |
 
 ### 6.8 合作模式 settings
@@ -371,9 +390,10 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 | `_all_players_terminal()` | 三人均 correct/skip 且无 pending 投票 |
 | `_normalize_round_phase()` | 修复遗留 judging/guessing；误进 rating 时回退 |
 | `_check_round_completion()` | 满足终态条件 → `rating` |
-| `_format_hints_for_viewer()` | 按观看者生成提示 payload |
+| `_format_hints_for_viewer()` | 按观看者生成提示 payload（含 `is_withdrawn`） |
 | `_snapshot_round_assignments()` | 轮末保存当轮人物快照 |
-| `_build_hint_rating_groups()` | rating 阶段按作者聚合提示 |
+| `_build_hint_rating_groups()` | rating 阶段按作者聚合**未撤回**提示 |
+| `delete_hint()` | 软撤回提示（`is_withdrawn=true`） |
 | `_pending_guess_scores()` | rating 阶段待结算猜对分（不含评价分） |
 | `submit_author_hint_rating()` | 按作者评价提示 |
 | `MatchResultBuilder.build()` | 终局复盘数据（按轮） |
@@ -401,7 +421,7 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 ### 7.3 回合数据
 
 - `rounds`：phase, is_coop_success, **assignments_snapshot**(JSON，当轮三人人物)
-- `hints`：author, content（多条/人/轮）
+- `hints`：author, content, **is_withdrawn**（软撤回标记，默认 false）；多条/人/轮
 - `guesses`：guess_text, verdict, **guess_history**(JSON `[{text, verdict}]`), is_skipped
 - `guess_votes`：两裁判投票
 - `hint_ratings`：按 hint 评价（**遗留**，新逻辑用 `author_hint_ratings`）
@@ -420,7 +440,10 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 - `rooms.0006_guess_history_default`：callable default
 - `rooms.0007_round_assignments_snapshot`：Round 增加 `assignments_snapshot`
 - `rooms.0008_character_reroll_request`：`CharacterRerollRequest` 表
+- `rooms.0009_matchplayerassignment_display_image_url`：分配随机展示图
+- `rooms.0010_hint_is_withdrawn`：`hints.is_withdrawn`
 - `catalog.0002_character_image_url_optional`：`characters.image_url` 可空
+- `catalog.0003_character_image`：`character_images` 多图表
 
 ### 7.5 种子数据
 
@@ -459,6 +482,7 @@ python manage.py seed_one_piece
 | GET | `/matches/current` | * | - | 当前对局状态（玩家视角） |
 | GET | `/matches/{id}/summary` | * | - | 终局数据 |
 | POST | `/rounds/current/hints` | ✓ | `{content}` | 发提示 |
+| DELETE | `/hints/{id}` | ✓ | - | **撤回**自己的提示（软删除，`is_withdrawn=true`） |
 | POST | `/rounds/current/guesses` | ✓ | `{text}` 或 `{skip:true}` | 文本猜人物 |
 | POST | `/rounds/current/character-rerolls` | ✓ | `{target_player_id}` | 申请为他人重选人物 |
 | POST | `/rounds/current/character-rerolls/confirm` | ✓ | `{target_player_id, approved}` | 第三人确认/拒绝重选 |
@@ -510,6 +534,7 @@ python manage.py seed_one_piece
       "author_name": "索隆",
       "content": "都用剑",
       "is_own": false,
+      "is_withdrawn": false,
       "other_player_name": "娜美",
       "other_character": { "name_zh": "娜美", "name_en": "Nami" }
     }
@@ -546,7 +571,7 @@ python manage.py seed_one_piece
 }
 ```
 
-`hint_rating_groups` / `round_result` 仅在 `phase=rating` 时有值。猜对后 `self.character` 变为人物对象。
+`hint_rating_groups` / `round_result` 仅在 `phase=rating` 时有值。猜对或 skip 后 `self.character` 变为人物对象。
 
 ### 8.5 `GET /matches/{id}/summary` 终局复盘
 
@@ -618,16 +643,17 @@ python manage.py seed_one_piece
 
 **活跃期**（`phase` 非 rating/settlement/complete）：
 
-1. 三人人物卡（自己未猜对时 `?`，猜对后 reveal）；他人卡片下可 **重选**（见 §6.3）
-2. **发送的提示**（仅 `is_own`）
-3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示
+1. 三人人物卡（自己未 reveal 时 `?`，**猜对或 skip 后** reveal）；他人卡片下可 **重选**（见 §6.3）
+2. **发送的提示**（仅 `is_own`；每条可 **撤回**，撤回后保留 + 删除线）
+3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示（含已撤回删除线）；**全量展开无滚动截断**
 4. **评判区**（他人 `pending` 猜测 + 投票）
-5. **发提示** / **猜人物**（猜错显示评判者昵称 + 已排除错误猜测列表；`guess_history`）
+5. **操作卡**（Tab：**发送提示** / **猜测身份**，二选一输入；猜错显示评判者昵称 + 已排除错误猜测列表；`guess_history`）
 
 **评价阶段**（`phase=rating`）：
 
 1. **本轮结果**卡片：每人猜对/猜错/放弃、合作得分或对战分数（含 `+n` 待结算猜对分）
-2. **评价提示**：按作者一张卡，其全部提示 + 单次赞/踩
+2. **你发出的提示**：本人全部提示（只读，含已撤回删除线）
+3. **评价提示**：按作者一张卡，其**未撤回**提示 + 单次赞/踩
 
 ### 10.2 ResultsPoster 终局页
 
@@ -682,9 +708,10 @@ python manage.py test apps.games apps.rooms
 
 覆盖要点：
 
-- 角色分配隐私 / 猜对后 reveal
+- 角色分配隐私 / 猜对后 reveal / **skip 后 reveal**
 - 文本猜测 + 评判 + 猜错重试
 - 猜对后仍可发提示
+- **提示软撤回**（`delete_hint` / `is_withdrawn`）
 - 遗留 `judging` phase 下仍可猜测
 - 提示个性化
 - 按作者评价提示 / `AuthorHintRating`
@@ -804,6 +831,11 @@ docker-compose up --build
 | 管理员上传成功但头像不变 | `CharacterPortrait` `failed` 未重置 | 已修；硬刷新可验证 |
 | 网页/微信拖图提示「请拖放图片文件」 | `dataTransfer` 异步后清空或仅有 URL 无文件 | 已修：同步捕获 + `items` + 服务端 `from-url` |
 | 拖拽上传后自动弹出图库 | 上传成功调用了 `setGalleryCharacterId` | 已修：仅点击肖像打开弹窗 |
+| 放弃猜测人物不显示 | 仅 `correct` 返回 `self.character` | 已修 v12：skip 同样 reveal |
+| 误把猜测答案发到提示框 | 提示/猜测两个独立输入框并存 | 已修 v12：单卡 Tab 切换 |
+| 撤回提示后从列表消失 | 物理 `DELETE` 记录 | 已修 v12：软撤回 + 删除线 UI |
+| rating 页看不到自己的提示 | `hint_rating_groups` 排除 `is_own` | 已修 v12：单独「你发出的提示」卡片 |
+| 多条提示需滚动才能看全 | `max-h-48 overflow-y-auto` | 已修 v12：全量展开 |
 | `makemigrations` 提示 rooms 索引漂移 | 索引名与 migration 不一致 | 模型 `Index` 须带 `name="character_r_round_i_6f0a2a_idx"` |
 
 ---
@@ -843,12 +875,14 @@ docker-compose up --build
 
 - 提示与猜测在活跃期**并行**
 - 轮次结束：**三人全部 correct 或 skip**，且无 pending 投票
-- 猜对后 `self.character` 对该玩家 reveal
+- 猜对或 skip 后 `self.character` 对该玩家 reveal
 - **每轮结束重新分配人物**，并快照至 `assignments_snapshot`
 - 对抗分数只在 `settlement` 结算
 - 裁判 2 人一致才判对
 - 猜测为**文本** + **人工评判**，非 ID 选择
-- 提示评价按**作者**计票与计分，非按单条 hint
+- 提示评价按**作者**计票与计分，非按单条 hint；**已撤回提示不参与评价**
+- 提示撤回为**软删除**（`is_withdrawn`），UI 显示删除线而非移除
+- 活跃期提示/猜测输入为**单卡 Tab 切换**，避免误提交
 - `Guess.objects.create` 必须带 `guess_history=[]`
 - 分享链接加入须处理 **token 房间不匹配**
 - 再来一局全员同意后须 **所有客户端** 跳转 `/play`（WS + API 双路径）
@@ -930,3 +964,4 @@ DEPLOY_RAILWAY.md
 | 管理员多图 UI | 叠加卡片 + 角标 + 点击弹窗管理 | `AdminCharacterImageStack`、`AdminCharacterGalleryModal` |
 | 拖拽上传增强 | 同步捕获 DataTransfer、`items` API、外链服务端导入 | `AdminCharacterImageFromUrlView` |
 | 上传不自动弹窗 | 拖放/选择上传成功不打开图库 Modal | 仅点击肖像打开 |
+| 游戏 UX v12 | skip reveal、Tab 输入、软撤回、rating 自己提示、提示全量展示 | commit `b934b46`；`rooms.0010` migrate |
