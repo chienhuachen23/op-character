@@ -4,6 +4,7 @@ from .views import (
     AdvanceHintsView,
     ConfirmCharacterRerollView,
     CurrentMatchView,
+    DeleteHintView,
     MatchSummaryView,
     RequestCharacterRerollView,
     RequestReplayView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("matches/current", CurrentMatchView.as_view(), name="match-current"),
     path("matches/<int:match_id>/summary", MatchSummaryView.as_view(), name="match-summary"),
     path("rounds/current/hints", SubmitHintView.as_view(), name="submit-hint"),
+    path("hints/<int:hint_id>", DeleteHintView.as_view(), name="delete-hint"),
     path("rounds/current/advance", AdvanceHintsView.as_view(), name="advance-hints"),
     path("rounds/current/guesses", SubmitGuessView.as_view(), name="submit-guess"),
     path(

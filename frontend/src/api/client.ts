@@ -71,6 +71,7 @@ export interface MatchState {
     content: string;
     created_at: string;
     is_own?: boolean;
+    is_withdrawn?: boolean;
     other_player_id?: number;
     other_player_name?: string;
     other_character?: { name_zh: string; name_en: string };
@@ -257,6 +258,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
+  deleteHint: (hintId: number) =>
+    apiFetch<MatchState>(`/hints/${hintId}`, { method: 'DELETE' }),
   advanceHints: () =>
     apiFetch<MatchState>('/rounds/current/advance', { method: 'POST' }),
   submitGuess: (body: { text?: string; skip?: boolean }) =>

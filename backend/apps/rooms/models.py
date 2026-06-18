@@ -136,6 +136,7 @@ class Hint(models.Model):
     round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="hints")
     author_player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name="hints")
     content = models.TextField()
+    is_withdrawn = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

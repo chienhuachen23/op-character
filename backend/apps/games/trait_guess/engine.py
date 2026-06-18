@@ -365,6 +365,7 @@ class TraitGuessEngine(GameEngine):
                 "content": h.content,
                 "created_at": h.created_at.isoformat(),
                 "is_own": int(author_id) == int(viewer.id),
+                "is_withdrawn": h.is_withdrawn,
             }
             if int(author_id) == int(viewer.id):
                 hints.append(base)
@@ -396,7 +397,7 @@ class TraitGuessEngine(GameEngine):
         }
         groups: dict[int, dict] = {}
         for hint in self._format_hints_for_viewer(round_obj, viewer, room_players, assignments):
-            if hint.get("is_own"):
+            if hint.get("is_own") or hint.get("is_withdrawn"):
                 continue
             author_id = hint["author_id"]
             if author_id not in groups:
@@ -506,10 +507,11 @@ class TraitGuessEngine(GameEngine):
 
         self_character = None
         if current_round:
-            correct_guess = current_round.guesses.filter(
-                player=player, verdict=GuessVerdict.CORRECT
+            revealed_guess = current_round.guesses.filter(
+                player=player,
+                verdict__in=(GuessVerdict.CORRECT, GuessVerdict.SKIPPED),
             ).first()
-            if correct_guess:
+            if revealed_guess:
                 assignment = assignment_map.get(player.id)
                 if assignment:
                     self_character = MatchResultBuilder._assignment_character_payload(assignment)
@@ -703,6 +705,24 @@ class TraitGuessEngine(GameEngine):
         self._broadcast(match)
         return self.get_state(match, player)
 
+    def delete_hint(self, match: Match, player: Player, hint: Hint):
+        current_round = self._get_current_round(match)
+        if not current_round:
+            raise GameAPIException("INVALID_PHASE", "No active round")
+        self._normalize_round_phase(current_round)
+        if not self._is_round_active(current_round):
+            raise GameAPIException("INVALID_PHASE", "Round is not active")
+        if hint.round_id != current_round.id:
+            raise GameAPIException("HINT_NOT_FOUND", "Hint not found in current round", 404)
+        if hint.author_player_id != player.id:
+            raise GameAPIException("NOT_AUTHOR", "Can only delete own hints", 403)
+        if hint.is_withdrawn:
+            raise GameAPIException("ALREADY_WITHDRAWN", "Hint already withdrawn", 409)
+        hint.is_withdrawn = True
+        hint.save(update_fields=["is_withdrawn"])
+        self._broadcast(match)
+        return self.get_state(match, player)
+
     def advance_hints_phase(self, match: Match, player: Player):
         # Guessing is allowed during hints; no manual advance needed.
         return self.get_state(match, player)
@@ -818,7 +838,7 @@ class TraitGuessEngine(GameEngine):
             raise GameAPIException("INVALID_PHASE", "Not in rating phase")
         if author.id == rater.id:
             raise GameAPIException("INVALID_RATER", "Cannot rate own hints")
-        if not round_obj.hints.filter(author_player=author).exists():
+        if not round_obj.hints.filter(author_player=author, is_withdrawn=False).exists():
             raise GameAPIException("INVALID_AUTHOR", "Player has no hints to rate")
         if rating not in (HintRatingType.LIKE, HintRatingType.DISLIKE):
             raise GameAPIException("INVALID_RATING", "Invalid rating")
@@ -839,7 +859,9 @@ class TraitGuessEngine(GameEngine):
             return
         players = list(round_obj.match.room.players.all())
         author_ids = list(
-            round_obj.hints.values_list("author_player_id", flat=True).distinct()
+            round_obj.hints.filter(is_withdrawn=False)
+            .values_list("author_player_id", flat=True)
+            .distinct()
         )
         if not author_ids:
             round_obj.phase = RoundPhase.SETTLEMENT

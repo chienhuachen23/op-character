@@ -49,6 +49,25 @@ class SubmitHintView(APIView):
         return Response(state)
 
 
+class DeleteHintView(APIView):
+    permission_classes = [PlayerTokenPermission]
+
+    def delete(self, request, hint_id):
+        room = request.room
+        match = room.current_match
+        if not match:
+            raise GameAPIException("NO_ACTIVE_MATCH", "No active match", 404)
+        try:
+            hint = Hint.objects.select_related("round", "round__match").get(
+                id=hint_id, round__match=match
+            )
+        except Hint.DoesNotExist:
+            raise GameAPIException("HINT_NOT_FOUND", "Hint not found", 404)
+        engine = get_engine_for_room(room)
+        state = engine.delete_hint(match, request.player, hint)
+        return Response(state)
+
+
 class AdvanceHintsView(APIView):
     permission_classes = [PlayerTokenPermission]
 

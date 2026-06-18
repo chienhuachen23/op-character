@@ -1,10 +1,12 @@
 from django.test import TestCase
 
 from apps.catalog.models import Character, GameMode, Theme
+from apps.core.exceptions import GameAPIException
 from apps.games.trait_guess.engine import TraitGuessEngine
 from apps.rooms.models import (
     GameType,
     GuessVerdict,
+    Hint,
     Player,
     RoundPhase,
 )
@@ -96,6 +98,27 @@ class TraitGuessEngineTest(TestCase):
         hint = next(h for h in state["hints"] if h["author_id"] == self.p2.id)
         self.assertFalse(hint["is_own"])
         self.assertEqual(hint["other_player_id"], self.p3.id)
+
+    def test_skip_guess_reveals_character(self):
+        self.engine.submit_guess(self.match, self.host, skip=True)
+        state = self.engine.get_state(self.match, self.host)
+        self.assertIsNotNone(state["self"]["character"])
+        assignment = self.match.assignments.get(player=self.host)
+        self.assertEqual(state["self"]["character"]["id"], assignment.character_id)
+
+    def test_delete_own_hint(self):
+        state = self.engine.submit_hint(self.match, self.p2, "fighters")
+        hint = Hint.objects.get(id=state["hints"][0]["id"])
+
+        with self.assertRaises(GameAPIException):
+            self.engine.delete_hint(self.match, self.host, hint)
+
+        state = self.engine.delete_hint(self.match, self.p2, hint)
+        self.assertEqual(len(state["hints"]), 1)
+        self.assertTrue(state["hints"][0]["is_withdrawn"])
+
+        with self.assertRaises(GameAPIException):
+            self.engine.delete_hint(self.match, self.p2, hint)
 
     def test_can_guess_while_in_legacy_judging_phase(self):
         current_round = self.match.rounds.first()
