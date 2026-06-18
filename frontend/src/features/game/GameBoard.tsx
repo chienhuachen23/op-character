@@ -280,8 +280,14 @@ export function GameBoard() {
   const hasRevealedCharacter = hasGuessedCorrectly || hasSkippedGuess;
   const canSubmitGuess = canGuess && myGuess?.verdict !== 'pending';
   const isGuessPending = myGuess?.verdict === 'pending';
-  const showGuessSection =
+  const showGuessActionBar =
     isPlayPhase && (canSubmitGuess || isGuessPending || hasRevealedCharacter);
+  const showGuessHistoryCard =
+    isPlayPhase &&
+    !!myGuess &&
+    (isGuessPending ||
+      myGuess.verdict === 'incorrect' ||
+      (myGuess.guess_history?.length ?? 0) > 0);
 
   const handleHint = async () => {
     if (!hintText.trim()) return;
@@ -401,7 +407,7 @@ export function GameBoard() {
   );
 
   return (
-    <div className="min-h-screen p-4 max-w-5xl mx-auto">
+    <div className={`min-h-screen p-4 max-w-5xl mx-auto ${showGuessActionBar ? 'pb-28' : ''}`}>
       <motion.div
         key={phase}
         initial={{ opacity: 0, x: 20 }}
@@ -591,79 +597,34 @@ export function GameBoard() {
                 </Card>
               )}
 
-              {showGuessSection && (
+              {showGuessHistoryCard && (
                 <Card className="mb-4">
-                  <h2 className="text-lg font-bold mb-4">{t('guessAnytime')}</h2>
-                  {hasGuessedCorrectly ? (
-                    <>
-                      <p className="text-green-400 text-center py-2">{t('guessCorrect')}</p>
-                      {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
-                        <GuessHistoryList history={myGuess.guess_history} t={t} />
-                      )}
-                    </>
-                  ) : hasSkippedGuess ? (
-                    <>
-                      <p className="text-parchment/70 text-center py-2">{t('guessSkippedReveal')}</p>
-                      {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
-                        <GuessHistoryList history={myGuess.guess_history} t={t} />
-                      )}
-                    </>
-                  ) : isGuessPending && myGuess ? (
+                  <h2 className="text-lg font-bold mb-4">{t('guessHistorySection')}</h2>
+                  {isGuessPending && myGuess ? (
                     <p className="text-parchment/70 text-center py-2">
                       {t('guessPending')}「{myGuess.guess_text}」
                     </p>
-                  ) : canSubmitGuess ? (
+                  ) : (
                     <>
                       {myGuess?.verdict === 'incorrect' && (
                         <p className="text-red-400 text-sm mb-3">
                           {formatGuessIncorrectMessage(myGuess, state, t)}
                         </p>
                       )}
-                      {myGuess && (
-                        <WrongGuessesList history={myGuess.guess_history ?? []} t={t} />
+                      {(myGuess?.guess_history?.length ?? 0) > 0 && (
+                        <>
+                          {myGuess?.verdict === 'incorrect' ? (
+                            <WrongGuessesList history={myGuess.guess_history ?? []} t={t} />
+                          ) : (
+                            <GuessHistoryList history={myGuess.guess_history ?? []} t={t} />
+                          )}
+                        </>
                       )}
                     </>
-                  ) : null}
+                  )}
                 </Card>
               )}
 
-              {showGuessSection && (
-                <div className="flex justify-between gap-4 mb-4">
-                  {!hasSkippedGuess && (
-                    <Button
-                      className={`flex-1 ${
-                        hasGuessedCorrectly
-                          ? 'bg-green-600 text-white hover:bg-green-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
-                          : isGuessPending
-                            ? 'disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
-                            : ''
-                      }`}
-                      disabled={loading || !canSubmitGuess}
-                      onClick={() => setGuessModalOpen(true)}
-                    >
-                      {hasGuessedCorrectly
-                        ? t('guessButtonCorrect')
-                        : isGuessPending
-                          ? t('guessButtonReviewing')
-                          : t('guessButton')}
-                    </Button>
-                  )}
-                  {!hasGuessedCorrectly && (
-                    <Button
-                      variant="ghost"
-                      className={`flex-1 font-bold ${
-                        hasSkippedGuess
-                          ? 'bg-red-600 text-white border-red-600 hover:bg-red-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
-                          : 'bg-parchment text-ocean border-parchment/80 hover:bg-parchment/90 disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
-                      }`}
-                      disabled={loading || !canSubmitGuess}
-                      onClick={() => setSkipConfirmOpen(true)}
-                    >
-                      {hasSkippedGuess ? t('skipButtonSurrender') : t('skipButtonShort')}
-                    </Button>
-                  )}
-                </div>
-              )}
             </>
           )}
 
@@ -830,6 +791,46 @@ export function GameBoard() {
 
       {error && <p className="text-red-400 text-center mt-4">{error}</p>}
 
+      {showGuessActionBar && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-straw/30 bg-ocean/95 backdrop-blur-md shadow-[0_-8px_24px_rgba(0,0,0,0.25)]">
+          <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between gap-4">
+            {!hasSkippedGuess && (
+              <Button
+                className={`flex-1 ${
+                  hasGuessedCorrectly
+                    ? 'bg-green-600 text-white hover:bg-green-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
+                    : isGuessPending
+                      ? 'disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
+                      : ''
+                }`}
+                disabled={loading || !canSubmitGuess}
+                onClick={() => setGuessModalOpen(true)}
+              >
+                {hasGuessedCorrectly
+                  ? t('guessButtonCorrect')
+                  : isGuessPending
+                    ? t('guessButtonReviewing')
+                    : t('guessButton')}
+              </Button>
+            )}
+            {!hasGuessedCorrectly && (
+              <Button
+                variant="ghost"
+                className={`flex-1 font-bold ${
+                  hasSkippedGuess
+                    ? 'bg-red-600 text-white border-red-600 hover:bg-red-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
+                    : 'text-white border border-parchment/50 bg-ocean/70 hover:bg-ocean/90 disabled:opacity-70 disabled:text-white cursor-default hover:scale-100 active:scale-100'
+                }`}
+                disabled={loading || !canSubmitGuess}
+                onClick={() => setSkipConfirmOpen(true)}
+              >
+                {hasSkippedGuess ? t('skipButtonSurrender') : t('skipButtonShort')}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       <Modal
         open={guessModalOpen}
         onClose={() => setGuessModalOpen(false)}
@@ -872,7 +873,7 @@ export function GameBoard() {
           </Button>
           <Button
             variant="ghost"
-            className="flex-1 bg-parchment text-ocean border-parchment/80 hover:bg-parchment/90 font-bold"
+            className="flex-1 font-bold text-white border border-parchment/50 bg-ocean/70 hover:bg-ocean/90"
             onClick={() => setSkipConfirmOpen(false)}
           >
             {t('cancel')}

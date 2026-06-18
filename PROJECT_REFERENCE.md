@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-19（v12.1）
+> 最后更新：2026-06-19（v12.2）
 
 ---
 
@@ -16,16 +16,23 @@
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
 
+**近期重要变更（v12.1→v12.2）：**
+
+- **猜测历史卡片**：原「随时猜测自己的人物」改为「猜测历史」（`guessHistorySection`）；**无猜测记录时隐藏**（避免开局空框）
+- **猜对不再卡片内重复提示**：终态「猜对了！」仅由底部绿色按钮展示；卡片仅在有 `guess_history` 时列出历史
+- **底部操作栏固定**：`fixed bottom-0`，滚动时「猜测！」/「放弃。。」始终可见；主内容 `pb-28` 防遮挡
+- **放弃钮样式**：「放弃。。」及放弃确认 Modal 的「取消」为**白字**深色底（`text-white`）
+
 **近期重要变更（v12→v12.1）：**
 
 - **提示与猜测 UI 分离**：发提示为独立卡片；猜测移至页面**最底部**操作栏（不再 Tab 合并）
 - **猜测/放弃弹窗**：点「猜测！」→ Modal 输入人物名后提交；点「放弃。。」→ Modal 确认「确认要放弃猜测吗？」，取消可继续猜
 - **底部按钮状态机**（始终可见，终态/等待时 disabled）：
-  - 可猜：左「猜测！」（黄）+ 右「放弃。。」（白），均可点
+  - 可猜：左「猜测！」（黄）+ 右「放弃。。」（白字），均可点
   - 等待评判：左「评审中～」+ 右「放弃。。」，均不可点
   - 猜对：仅左「猜对了！」绿色宽按钮，放弃隐藏
   - 已放弃：仅右「认输了。。」红色宽按钮，猜测隐藏
-- **i18n**：`guessButton`、`guessButtonCorrect`、`guessButtonReviewing`、`skipButtonShort`、`skipButtonSurrender`、`confirmSkipGuess`
+- **i18n**：`guessButton`、`guessButtonCorrect`、`guessButtonReviewing`、`skipButtonShort`、`skipButtonSurrender`、`confirmSkipGuess`、`guessHistorySection`
 
 **近期重要变更（v11→v12）：**
 
@@ -659,8 +666,8 @@ python manage.py seed_one_piece
 3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示（含已撤回删除线）；**全量展开无滚动截断**
 4. **评判区**（他人 `pending` 猜测 + 投票）
 5. **发提示**卡片：输入框 + 发送（与猜测分离，见 §10.1.1）
-6. **猜测状态**卡片：猜对/放弃/等待评判文案；猜错时显示评判者昵称 + `excludedWrongGuesses` / `guess_history`
-7. **底部猜测操作栏**（§10.1.1）：「猜测！」/「放弃。。」及终态变体
+6. **猜测历史**卡片（§10.1.2）：有内容时才显示（等待评判 / 猜错 / 有 `guess_history`）
+7. **底部固定猜测操作栏**（§10.1.1）：`fixed` 贴底，不随滚动
 
 **评价阶段**（`phase=rating`）：
 
@@ -668,19 +675,31 @@ python manage.py seed_one_piece
 2. **你发出的提示**：本人全部提示（只读，含已撤回删除线）
 3. **评价提示**：按作者一张卡，其**未撤回**提示 + 单次赞/踩
 
-### 10.1.1 底部猜测操作栏与 Modal
+### 10.1.1 底部固定猜测操作栏与 Modal
 
 组件：`GameBoard.tsx` + `components/ui.tsx` `Modal`
 
+- **布局**：`fixed bottom-0 left-0 right-0 z-40`；半透明 `bg-ocean/95` + 顶部分割线；内层 `max-w-5xl` 与页面同宽
+- **主内容**：操作栏显示时根容器 `pb-28`，避免列表被挡
+
 | 玩家 guess 状态 | 左钮（猜测侧） | 右钮（放弃侧） |
 |---|---|---|
-| 可提交（无 guess / `incorrect`） | 「猜测！」黄色 `primary`，可点 → **猜测 Modal**（输入 + 提交/取消） | 「放弃。。」白色，可点 → **确认 Modal** |
-| `pending` | 「评审中～」，disabled | 「放弃。。」，disabled |
+| 可提交（无 guess / `incorrect`） | 「猜测！」黄色 `primary`，可点 → **猜测 Modal** | 「放弃。。」**白字**深色底，可点 → **确认 Modal** |
+| `pending` | 「评审中～」，disabled | 「放弃。。」白字，disabled |
 | `correct` | 「猜对了！」绿色宽钮，disabled；**放弃钮隐藏** | — |
 | `skipped` | —（**猜测钮隐藏**） | 「认输了。。」红色宽钮，disabled |
 
 - 猜测 Modal 标题：`actionModeGuess`（「猜测身份」）；Enter 可提交
-- 放弃确认 Modal：`confirmSkipGuess`；确认调用 `POST /rounds/current/guesses` `{skip:true}`
+- 放弃确认 Modal：`confirmSkipGuess`；「取消」为**白字**；确认调用 `POST /rounds/current/guesses` `{skip:true}`
+
+### 10.1.2 猜测历史卡片
+
+- 标题 i18n：`guessHistorySection`（「猜测历史」）
+- **显示条件**（`showGuessHistoryCard`）：`myGuess` 存在且满足其一：
+  - `verdict=pending`（展示等待评判文案 + 当前猜测文本）
+  - `verdict=incorrect`（评判者昵称提示 + `excludedWrongGuesses`）
+  - `guess_history` 非空（展示 `GuessHistoryList`）
+- **不显示**：尚未猜测；首次猜对且无历史（终态由底部绿色按钮表达，卡片内**不再**重复「猜对了！」）
 
 ### 10.2 ResultsPoster 终局页
 
@@ -909,7 +928,7 @@ docker-compose up --build
 - 猜测为**文本** + **人工评判**，非 ID 选择
 - 提示评价按**作者**计票与计分，非按单条 hint；**已撤回提示不参与评价**
 - 提示撤回为**软删除**（`is_withdrawn`），UI 显示删除线而非移除
-- 活跃期**发提示与猜测分离**：提示独立卡片；猜测为底部操作栏 + Modal，避免误提交
+- 活跃期**发提示与猜测分离**：提示独立卡片；猜测为**底部 fixed 操作栏** + Modal，避免误提交
 - `Guess.objects.create` 必须带 `guess_history=[]`
 - 分享链接加入须处理 **token 房间不匹配**
 - 再来一局全员同意后须 **所有客户端** 跳转 `/play`（WS + API 双路径）
@@ -992,4 +1011,5 @@ DEPLOY_RAILWAY.md
 | 拖拽上传增强 | 同步捕获 DataTransfer、`items` API、外链服务端导入 | `AdminCharacterImageFromUrlView` |
 | 上传不自动弹窗 | 拖放/选择上传成功不打开图库 Modal | 仅点击肖像打开 |
 | 游戏 UX v12 | skip reveal、软撤回、rating 自己提示、提示全量展示 | commit `b934b46`；`rooms.0010` migrate |
-| 游戏 UX v12.1 | 提示/猜测分离、底部按钮 + Modal、按钮终态样式 | 见 §10.1.1 |
+| 游戏 UX v12.1 | 提示/猜测分离、底部按钮 + Modal、按钮终态样式 | commit `a1c946e` |
+| 游戏 UX v12.2 | 猜测历史卡片、fixed 底栏、放弃钮白字 | 见 §10.1.1–§10.1.2 |
