@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-19（v12）
+> 最后更新：2026-06-19（v12.1）
 
 ---
 
@@ -16,15 +16,25 @@
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
 
+**近期重要变更（v12→v12.1）：**
+
+- **提示与猜测 UI 分离**：发提示为独立卡片；猜测移至页面**最底部**操作栏（不再 Tab 合并）
+- **猜测/放弃弹窗**：点「猜测！」→ Modal 输入人物名后提交；点「放弃。。」→ Modal 确认「确认要放弃猜测吗？」，取消可继续猜
+- **底部按钮状态机**（始终可见，终态/等待时 disabled）：
+  - 可猜：左「猜测！」（黄）+ 右「放弃。。」（白），均可点
+  - 等待评判：左「评审中～」+ 右「放弃。。」，均不可点
+  - 猜对：仅左「猜对了！」绿色宽按钮，放弃隐藏
+  - 已放弃：仅右「认输了。。」红色宽按钮，猜测隐藏
+- **i18n**：`guessButton`、`guessButtonCorrect`、`guessButtonReviewing`、`skipButtonShort`、`skipButtonSurrender`、`confirmSkipGuess`
+
 **近期重要变更（v11→v12）：**
 
 - **放弃猜测也 reveal**：`self.character` 在 `verdict=correct` **或** `skipped` 时返回；前端显示「已放弃猜测，人物已揭晓」
-- **提示/猜测输入合并**：`GameBoard` 单卡 Tab 切换「发送提示」/「猜测身份」，避免误把猜测答案发到提示框；猜对/放弃后自动切回提示模式
 - **提示软撤回**：`DELETE /hints/{id}` 将 `is_withdrawn=true`（非物理删除）；列表保留并显示删除线；已撤回不参与 rating 计票/计分
 - **提示列表全量展示**：移除 `max-h-48 overflow-y-auto`，多条提示完整展开
 - **评价阶段显示自己的提示**：rating 页新增「你发出的提示」只读区块（`yourHints`）；他人提示仍在 `hint_rating_groups` 评价
 - **迁移**：`rooms.0010_hint_is_withdrawn`（`hints.is_withdrawn`）
-- **i18n**：`actionModeHint`、`actionModeGuess`、`withdrawHint`、`guessSkippedReveal`；修复英文 `guessCorrect`
+- **i18n**：`withdrawHint`、`guessSkippedReveal`；修复英文 `guessCorrect`
 
 **近期重要变更（v10→v11）：**
 
@@ -267,14 +277,15 @@ hints（活跃期，提示+猜测+评判并行）→ rating → settlement → c
 
 | 行为 | 说明 |
 |---|---|
-| 发提示 | 随时可发，可多条；分区显示「发送的提示」「收到的提示」；**可撤回**（软删除 + 删除线，见 §6.5.2） |
-| 文本猜人物 | 输入框提交 `{text}`，非下拉选角色；与发提示**同卡 Tab 切换**，避免误输入 |
+| 发提示 | 随时可发，可多条；**独立卡片**输入；分区显示「发送的提示」「收到的提示」；**可撤回**（软删除 + 删除线，见 §6.5.2） |
+| 文本猜人物 | 页面底部「猜测！」→ **Modal** 输入 `{text}` 提交；非下拉选角色 |
+| 放弃猜测 | 底部「放弃。。」→ **确认 Modal**；确认后 `{skip:true}`，取消仍可猜 |
 | 他人评判 | 提交猜测后，另外两人**在同一页面**看到并投票 |
 | 猜对 reveal | `self.character` 对该玩家可见，人物卡从 `?` 变为真实人物 |
-| 猜错重试 | 两人都判错 → `verdict=incorrect` → 可再次输入；**历史错误答案**记入 `guess_history` 并展示 |
-| 等待评判 | `verdict=pending` 时不可重复提交；操作卡自动切到猜测状态展示等待文案 |
-| 猜对后继续 | 仍可发提示；不可再次猜测；操作卡默认提示 Tab |
-| 放弃 | `{skip:true}`，本轮不再猜测；**同样 reveal 自己人物**（与猜对一致） |
+| 猜错重试 | 两人都判错 → `verdict=incorrect` → 可再次点「猜测！」；**历史错误答案**记入 `guess_history` 并展示 |
+| 等待评判 | `verdict=pending` 时不可再提交；底部左钮「评审中～」、右钮「放弃。。」均 disabled |
+| 猜对后继续 | 仍可发提示；底部左钮「猜对了！」绿色 disabled，放弃钮隐藏 |
+| 放弃后 | 仍可发提示；底部右钮「认输了。。」红色 disabled，猜测钮隐藏 |
 | **人物重选** | 玩家 A 为 B 点「重选」→ 玩家 C 确认 → B 换新角色；删 B 当轮 Guess；同时仅 1 个 pending 申请 |
 
 ### 6.4 轮次结束条件
@@ -647,13 +658,29 @@ python manage.py seed_one_piece
 2. **发送的提示**（仅 `is_own`；每条可 **撤回**，撤回后保留 + 删除线）
 3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示（含已撤回删除线）；**全量展开无滚动截断**
 4. **评判区**（他人 `pending` 猜测 + 投票）
-5. **操作卡**（Tab：**发送提示** / **猜测身份**，二选一输入；猜错显示评判者昵称 + 已排除错误猜测列表；`guess_history`）
+5. **发提示**卡片：输入框 + 发送（与猜测分离，见 §10.1.1）
+6. **猜测状态**卡片：猜对/放弃/等待评判文案；猜错时显示评判者昵称 + `excludedWrongGuesses` / `guess_history`
+7. **底部猜测操作栏**（§10.1.1）：「猜测！」/「放弃。。」及终态变体
 
 **评价阶段**（`phase=rating`）：
 
 1. **本轮结果**卡片：每人猜对/猜错/放弃、合作得分或对战分数（含 `+n` 待结算猜对分）
 2. **你发出的提示**：本人全部提示（只读，含已撤回删除线）
 3. **评价提示**：按作者一张卡，其**未撤回**提示 + 单次赞/踩
+
+### 10.1.1 底部猜测操作栏与 Modal
+
+组件：`GameBoard.tsx` + `components/ui.tsx` `Modal`
+
+| 玩家 guess 状态 | 左钮（猜测侧） | 右钮（放弃侧） |
+|---|---|---|
+| 可提交（无 guess / `incorrect`） | 「猜测！」黄色 `primary`，可点 → **猜测 Modal**（输入 + 提交/取消） | 「放弃。。」白色，可点 → **确认 Modal** |
+| `pending` | 「评审中～」，disabled | 「放弃。。」，disabled |
+| `correct` | 「猜对了！」绿色宽钮，disabled；**放弃钮隐藏** | — |
+| `skipped` | —（**猜测钮隐藏**） | 「认输了。。」红色宽钮，disabled |
+
+- 猜测 Modal 标题：`actionModeGuess`（「猜测身份」）；Enter 可提交
+- 放弃确认 Modal：`confirmSkipGuess`；确认调用 `POST /rounds/current/guesses` `{skip:true}`
 
 ### 10.2 ResultsPoster 终局页
 
@@ -832,7 +859,7 @@ docker-compose up --build
 | 网页/微信拖图提示「请拖放图片文件」 | `dataTransfer` 异步后清空或仅有 URL 无文件 | 已修：同步捕获 + `items` + 服务端 `from-url` |
 | 拖拽上传后自动弹出图库 | 上传成功调用了 `setGalleryCharacterId` | 已修：仅点击肖像打开弹窗 |
 | 放弃猜测人物不显示 | 仅 `correct` 返回 `self.character` | 已修 v12：skip 同样 reveal |
-| 误把猜测答案发到提示框 | 提示/猜测两个独立输入框并存 | 已修 v12：单卡 Tab 切换 |
+| 误把猜测答案发到提示框 | 提示/猜测输入框同屏易混淆 | 已修 v12.1：发提示独立卡片；猜测走底部 Modal |
 | 撤回提示后从列表消失 | 物理 `DELETE` 记录 | 已修 v12：软撤回 + 删除线 UI |
 | rating 页看不到自己的提示 | `hint_rating_groups` 排除 `is_own` | 已修 v12：单独「你发出的提示」卡片 |
 | 多条提示需滚动才能看全 | `max-h-48 overflow-y-auto` | 已修 v12：全量展开 |
@@ -882,7 +909,7 @@ docker-compose up --build
 - 猜测为**文本** + **人工评判**，非 ID 选择
 - 提示评价按**作者**计票与计分，非按单条 hint；**已撤回提示不参与评价**
 - 提示撤回为**软删除**（`is_withdrawn`），UI 显示删除线而非移除
-- 活跃期提示/猜测输入为**单卡 Tab 切换**，避免误提交
+- 活跃期**发提示与猜测分离**：提示独立卡片；猜测为底部操作栏 + Modal，避免误提交
 - `Guess.objects.create` 必须带 `guess_history=[]`
 - 分享链接加入须处理 **token 房间不匹配**
 - 再来一局全员同意后须 **所有客户端** 跳转 `/play`（WS + API 双路径）
@@ -964,4 +991,5 @@ DEPLOY_RAILWAY.md
 | 管理员多图 UI | 叠加卡片 + 角标 + 点击弹窗管理 | `AdminCharacterImageStack`、`AdminCharacterGalleryModal` |
 | 拖拽上传增强 | 同步捕获 DataTransfer、`items` API、外链服务端导入 | `AdminCharacterImageFromUrlView` |
 | 上传不自动弹窗 | 拖放/选择上传成功不打开图库 Modal | 仅点击肖像打开 |
-| 游戏 UX v12 | skip reveal、Tab 输入、软撤回、rating 自己提示、提示全量展示 | commit `b934b46`；`rooms.0010` migrate |
+| 游戏 UX v12 | skip reveal、软撤回、rating 自己提示、提示全量展示 | commit `b934b46`；`rooms.0010` migrate |
+| 游戏 UX v12.1 | 提示/猜测分离、底部按钮 + Modal、按钮终态样式 | 见 §10.1.1 |

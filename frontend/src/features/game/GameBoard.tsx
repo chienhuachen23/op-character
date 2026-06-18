@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api, type MatchState } from '../../api/client';
 import { useRoomWebSocket } from '../../ws/useRoomWebSocket';
-import { Card, Button, Input } from '../../components/ui';
+import { Card, Button, Input, Modal } from '../../components/ui';
 import { CharacterCard } from '../../components/CharacterCard';
 import { characterName } from '../../i18n';
 
@@ -229,7 +229,8 @@ export function GameBoard() {
   const [state, setState] = useState<MatchState | null>(null);
   const [hintText, setHintText] = useState('');
   const [guessText, setGuessText] = useState('');
-  const [actionMode, setActionMode] = useState<'hint' | 'guess'>('hint');
+  const [guessModalOpen, setGuessModalOpen] = useState(false);
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const mountedRef = useRef(true);
@@ -279,17 +280,8 @@ export function GameBoard() {
   const hasRevealedCharacter = hasGuessedCorrectly || hasSkippedGuess;
   const canSubmitGuess = canGuess && myGuess?.verdict !== 'pending';
   const isGuessPending = myGuess?.verdict === 'pending';
-  const showActionTabs = canHint && canSubmitGuess && !isGuessPending;
-  const effectiveActionMode: 'hint' | 'guess' =
-    isGuessPending || !canHint
-      ? 'guess'
-      : !canSubmitGuess && canHint
-        ? 'hint'
-        : actionMode;
-
-  useEffect(() => {
-    if (hasRevealedCharacter) setActionMode('hint');
-  }, [hasRevealedCharacter]);
+  const showGuessSection =
+    isPlayPhase && (canSubmitGuess || isGuessPending || hasRevealedCharacter);
 
   const handleHint = async () => {
     if (!hintText.trim()) return;
@@ -327,7 +319,12 @@ export function GameBoard() {
         skip ? { skip: true } : { text: guessText.trim() }
       );
       setState(data);
-      if (!skip) setGuessText('');
+      if (skip) {
+        setSkipConfirmOpen(false);
+      } else {
+        setGuessText('');
+        setGuessModalOpen(false);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -577,103 +574,95 @@ export function GameBoard() {
                 </Card>
               )}
 
-              {(canHint || canSubmitGuess || isGuessPending || hasRevealedCharacter) && (
+              {canHint && (
                 <Card className="mb-4">
-                  {showActionTabs && (
-                    <div className="flex gap-2 mb-4 p-1 rounded-xl bg-ocean/60 border border-parchment/10">
-                      <button
-                        type="button"
-                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
-                          effectiveActionMode === 'hint'
-                            ? 'bg-straw/20 text-straw border border-straw/40'
-                            : 'text-parchment/60 hover:text-parchment'
-                        }`}
-                        onClick={() => setActionMode('hint')}
-                      >
-                        {t('actionModeHint')}
-                      </button>
-                      <button
-                        type="button"
-                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
-                          effectiveActionMode === 'guess'
-                            ? 'bg-straw/20 text-straw border border-straw/40'
-                            : 'text-parchment/60 hover:text-parchment'
-                        }`}
-                        onClick={() => setActionMode('guess')}
-                      >
-                        {t('actionModeGuess')}
-                      </button>
-                    </div>
-                  )}
-
-                  {effectiveActionMode === 'hint' && canHint ? (
-                    <>
-                      <p className="text-xs text-parchment/50 mb-3">{t('hintPlaceholder')}</p>
-                      <div className="flex gap-2">
-                        <Input
-                          value={hintText}
-                          onChange={(e) => setHintText(e.target.value)}
-                          placeholder={t('hintPlaceholder')}
-                          onKeyDown={(e) => e.key === 'Enter' && handleHint()}
-                        />
-                        <Button onClick={handleHint} disabled={loading || !hintText.trim()}>
-                          {t('sendHint')}
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <h2 className="text-lg font-bold mb-4">{t('guessAnytime')}</h2>
-                      {hasGuessedCorrectly ? (
-                        <>
-                          <p className="text-green-400 text-center py-2">{t('guessCorrect')}</p>
-                          {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
-                            <GuessHistoryList history={myGuess.guess_history} t={t} />
-                          )}
-                        </>
-                      ) : hasSkippedGuess ? (
-                        <>
-                          <p className="text-parchment/70 text-center py-2">{t('guessSkippedReveal')}</p>
-                          {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
-                            <GuessHistoryList history={myGuess.guess_history} t={t} />
-                          )}
-                        </>
-                      ) : isGuessPending && myGuess ? (
-                        <p className="text-parchment/70 text-center py-2">
-                          {t('guessPending')}「{myGuess.guess_text}」
-                        </p>
-                      ) : canSubmitGuess ? (
-                        <>
-                          {myGuess?.verdict === 'incorrect' && (
-                            <p className="text-red-400 text-sm mb-3">
-                              {formatGuessIncorrectMessage(myGuess, state, t)}
-                            </p>
-                          )}
-                          {myGuess && (
-                            <WrongGuessesList history={myGuess.guess_history ?? []} t={t} />
-                          )}
-                          <div className="flex gap-2">
-                            <Input
-                              value={guessText}
-                              onChange={(e) => setGuessText(e.target.value)}
-                              placeholder={t('guessPlaceholder')}
-                              onKeyDown={(e) => e.key === 'Enter' && handleGuess(false)}
-                            />
-                            <Button
-                              onClick={() => handleGuess(false)}
-                              disabled={loading || !guessText.trim()}
-                            >
-                              {t('submitGuess')}
-                            </Button>
-                            <Button variant="ghost" onClick={() => handleGuess(true)} disabled={loading}>
-                              {t('skipGuess')}
-                            </Button>
-                          </div>
-                        </>
-                      ) : null}
-                    </>
-                  )}
+                  <h2 className="text-lg font-bold mb-4">{t('sendHint')}</h2>
+                  <div className="flex gap-2">
+                    <Input
+                      value={hintText}
+                      onChange={(e) => setHintText(e.target.value)}
+                      placeholder={t('hintPlaceholder')}
+                      onKeyDown={(e) => e.key === 'Enter' && handleHint()}
+                    />
+                    <Button onClick={handleHint} disabled={loading || !hintText.trim()}>
+                      {t('sendHint')}
+                    </Button>
+                  </div>
                 </Card>
+              )}
+
+              {showGuessSection && (
+                <Card className="mb-4">
+                  <h2 className="text-lg font-bold mb-4">{t('guessAnytime')}</h2>
+                  {hasGuessedCorrectly ? (
+                    <>
+                      <p className="text-green-400 text-center py-2">{t('guessCorrect')}</p>
+                      {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
+                        <GuessHistoryList history={myGuess.guess_history} t={t} />
+                      )}
+                    </>
+                  ) : hasSkippedGuess ? (
+                    <>
+                      <p className="text-parchment/70 text-center py-2">{t('guessSkippedReveal')}</p>
+                      {myGuess && (myGuess.guess_history?.length ?? 0) > 0 && (
+                        <GuessHistoryList history={myGuess.guess_history} t={t} />
+                      )}
+                    </>
+                  ) : isGuessPending && myGuess ? (
+                    <p className="text-parchment/70 text-center py-2">
+                      {t('guessPending')}「{myGuess.guess_text}」
+                    </p>
+                  ) : canSubmitGuess ? (
+                    <>
+                      {myGuess?.verdict === 'incorrect' && (
+                        <p className="text-red-400 text-sm mb-3">
+                          {formatGuessIncorrectMessage(myGuess, state, t)}
+                        </p>
+                      )}
+                      {myGuess && (
+                        <WrongGuessesList history={myGuess.guess_history ?? []} t={t} />
+                      )}
+                    </>
+                  ) : null}
+                </Card>
+              )}
+
+              {showGuessSection && (
+                <div className="flex justify-between gap-4 mb-4">
+                  {!hasSkippedGuess && (
+                    <Button
+                      className={`flex-1 ${
+                        hasGuessedCorrectly
+                          ? 'bg-green-600 text-white hover:bg-green-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
+                          : isGuessPending
+                            ? 'disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
+                            : ''
+                      }`}
+                      disabled={loading || !canSubmitGuess}
+                      onClick={() => setGuessModalOpen(true)}
+                    >
+                      {hasGuessedCorrectly
+                        ? t('guessButtonCorrect')
+                        : isGuessPending
+                          ? t('guessButtonReviewing')
+                          : t('guessButton')}
+                    </Button>
+                  )}
+                  {!hasGuessedCorrectly && (
+                    <Button
+                      variant="ghost"
+                      className={`flex-1 font-bold ${
+                        hasSkippedGuess
+                          ? 'bg-red-600 text-white border-red-600 hover:bg-red-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
+                          : 'bg-parchment text-ocean border-parchment/80 hover:bg-parchment/90 disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
+                      }`}
+                      disabled={loading || !canSubmitGuess}
+                      onClick={() => setSkipConfirmOpen(true)}
+                    >
+                      {hasSkippedGuess ? t('skipButtonSurrender') : t('skipButtonShort')}
+                    </Button>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -840,6 +829,56 @@ export function GameBoard() {
       </AnimatePresence>
 
       {error && <p className="text-red-400 text-center mt-4">{error}</p>}
+
+      <Modal
+        open={guessModalOpen}
+        onClose={() => setGuessModalOpen(false)}
+        title={t('actionModeGuess')}
+      >
+        <Input
+          value={guessText}
+          onChange={(e) => setGuessText(e.target.value)}
+          placeholder={t('guessPlaceholder')}
+          autoFocus
+          onKeyDown={(e) => e.key === 'Enter' && guessText.trim() && handleGuess(false)}
+        />
+        <div className="flex gap-2 mt-4">
+          <Button
+            className="flex-1"
+            onClick={() => handleGuess(false)}
+            disabled={loading || !guessText.trim()}
+          >
+            {t('submitGuess')}
+          </Button>
+          <Button variant="ghost" className="flex-1" onClick={() => setGuessModalOpen(false)}>
+            {t('cancel')}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={skipConfirmOpen}
+        onClose={() => setSkipConfirmOpen(false)}
+        title={t('skipGuess')}
+      >
+        <p className="text-parchment/80 mb-6">{t('confirmSkipGuess')}</p>
+        <div className="flex gap-2">
+          <Button
+            className="flex-1"
+            onClick={() => handleGuess(true)}
+            disabled={loading}
+          >
+            {t('confirmSkipYes')}
+          </Button>
+          <Button
+            variant="ghost"
+            className="flex-1 bg-parchment text-ocean border-parchment/80 hover:bg-parchment/90 font-bold"
+            onClick={() => setSkipConfirmOpen(false)}
+          >
+            {t('cancel')}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
