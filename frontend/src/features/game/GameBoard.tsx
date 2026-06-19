@@ -2,10 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
+import clsx from 'clsx';
 import { api, type MatchState } from '../../api/client';
 import { useRoomWebSocket } from '../../ws/useRoomWebSocket';
-import { Card, Button, Input, Modal } from '../../components/ui';
+import { Card, Button, Input, Modal, SfxToggle } from '../../components/ui';
 import { CharacterCard } from '../../components/CharacterCard';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { PhaseBanner, SettlementWaiting } from '../../components/PhaseBanner';
+import { GameBoardSkeleton } from '../../components/Skeleton';
+import { useToast } from '../../components/Toast';
+import { useGameSfx } from '../../hooks/useGameSfx';
+import { useHaptic } from '../../hooks/useHaptic';
+import { useConfetti } from '../../hooks/useConfetti';
+import { useMatchStateDiff } from '../../hooks/useMatchStateDiff';
 import { characterName } from '../../i18n';
 
 function isOwnHint(hint: MatchState['hints'][0], selfPlayerId: number): boolean {
@@ -119,9 +128,11 @@ function GuessHistoryList({
 function WrongGuessesList({
   history,
   t,
+  shakeKey,
 }: {
   history: Array<{ text: string; verdict: string }>;
   t: (key: string, opts?: Record<string, string>) => string;
+  shakeKey?: number;
 }) {
   const wrong = history.filter((entry) => entry.verdict === 'incorrect');
   if (!wrong.length) return null;
@@ -130,12 +141,148 @@ function WrongGuessesList({
       <p className="text-xs text-parchment/60 mb-1">{t('excludedWrongGuesses')}</p>
       <ul className="space-y-1">
         {wrong.map((entry, i) => (
-          <li key={`${entry.text}-${i}`} className="text-sm text-red-300">
+          <li
+            key={`${entry.text}-${i}`}
+            className={clsx(
+              'text-sm text-red-300 rounded px-2 py-1',
+              i === wrong.length - 1 && shakeKey ? 'animate-shake-x animate-flash-red' : ''
+            )}
+          >
             {t('guessHistoryWrong', { text: entry.text })}
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+function PendingJudgingCard({
+  guesses,
+  state,
+  loading,
+  t,
+  onVote,
+  voteFlashId,
+}: {
+  guesses: MatchState['guesses'];
+  state: MatchState;
+  loading: boolean;
+  t: (key: string, opts?: Record<string, string>) => string;
+  onVote: (guessId: number, isCorrect: boolean) => void;
+  voteFlashId: number | null;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (guesses.length > 0 && ref.current) {
+      ref.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [guesses.length]);
+
+  if (!guesses.length) return null;
+
+  return (
+    <div ref={ref}>
+    <Card className="mb-4 ring-2 ring-amber-400/50 animate-highlight-pulse">
+      <h2 className="text-lg font-bold mb-3 text-amber-200">{t('phase_judging')}</h2>
+      {guesses.map((g) => {
+        const myVote = g.votes.find((v) => v.voter_id === state.self.player_id);
+        const alreadyVoted = !!myVote;
+        return (
+          <div
+            key={g.id}
+            className={clsx(
+              'mb-4 p-4 rounded-xl transition-colors',
+              voteFlashId === g.id ? 'animate-flash-green' : 'bg-ocean/40'
+            )}
+          >
+            <p className="mb-2">
+              {t('judgeGuess', { name: g.player_name, text: g.guess_text })}
+            </p>
+            {!alreadyVoted ? (
+              <div className="flex gap-2">
+                <Button onClick={() => onVote(g.id, true)} disabled={loading}>
+                  {t('voteCorrect')}
+                </Button>
+                <Button variant="danger" onClick={() => onVote(g.id, false)} disabled={loading}>
+                  {t('voteIncorrect')}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-green-400">
+                {myVote?.is_correct ? t('youVotedCorrect') : t('youVotedIncorrect')} ·{' '}
+                {t('waitingForOthers')}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </Card>
+    </div>
+  );
+}
+
+function RerollFloatingBanner({
+  state,
+  loading,
+  t,
+  onConfirm,
+}: {
+  state: MatchState;
+  loading: boolean;
+  t: (key: string, opts?: Record<string, string>) => string;
+  onConfirm: (targetPlayerId: number, approved: boolean) => void;
+}) {
+  const reroll = state.character_reroll;
+  if (reroll?.status !== 'pending' || !reroll) return null;
+
+  const selfId = state.self.player_id;
+  const isConfirmer = selfId === reroll.confirmer_player_id;
+  const isTarget = selfId === reroll.target_player_id;
+  const isRequester = selfId === reroll.requester_player_id;
+
+  if (!isConfirmer && !isTarget && !isRequester) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mb-4 rounded-xl border border-amber-400/60 bg-amber-500/15 px-4 py-3 backdrop-blur-sm"
+    >
+      {isConfirmer ? (
+        <>
+          <p className="text-sm text-parchment/90 mb-3 text-center">
+            {t('rerollConfirmPrompt', {
+              requester: reroll.requester_player_name,
+              target: reroll.target_player_name,
+            })}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              className="flex-1"
+              disabled={loading}
+              onClick={() => onConfirm(reroll.target_player_id, true)}
+            >
+              {t('rerollApprove')}
+            </Button>
+            <Button
+              className="flex-1"
+              variant="ghost"
+              disabled={loading}
+              onClick={() => onConfirm(reroll.target_player_id, false)}
+            >
+              {t('rerollReject')}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-center text-amber-100">
+          {isRequester
+            ? t('rerollWaitingConfirm')
+            : t('rerollPendingForYou')}
+        </p>
+      )}
+    </motion.div>
   );
 }
 
@@ -233,7 +380,14 @@ export function GameBoard() {
   const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [highlightedHintIds, setHighlightedHintIds] = useState<Set<number>>(new Set());
+  const [shakeKey, setShakeKey] = useState(0);
+  const [voteFlashId, setVoteFlashId] = useState<number | null>(null);
   const mountedRef = useRef(true);
+  const { toast } = useToast();
+  const { play } = useGameSfx();
+  const { vibrate } = useHaptic();
+  const { burst } = useConfetti();
 
   const lang = i18n.language;
 
@@ -262,8 +416,40 @@ export function GameBoard() {
     fetchState();
   }, [fetchState]);
 
-  useRoomWebSocket(code, () => {
+  const wsStatus = useRoomWebSocket(code, () => {
     fetchState();
+  });
+
+  useMatchStateDiff(state, {
+    playSfx: play,
+    vibrate,
+    onEvent: (event) => {
+      if (event.type === 'new_hint') {
+        if (!event.isOwn) {
+          toast(t('toast_newHint', { name: event.authorName }), 'info');
+        }
+        setHighlightedHintIds((prev) => new Set(prev).add(event.hintId));
+        setTimeout(() => {
+          setHighlightedHintIds((prev) => {
+            const next = new Set(prev);
+            next.delete(event.hintId);
+            return next;
+          });
+        }, 2000);
+      }
+      if (event.type === 'new_pending_guess') {
+        toast(t('toast_newGuess', { name: event.playerName }), 'info');
+      }
+      if (event.type === 'guess_incorrect') {
+        setShakeKey((k) => k + 1);
+      }
+      if (event.type === 'self_revealed' && !event.skipped) {
+        burst();
+      }
+      if (event.type === 'coop_round_result' && event.success) {
+        burst();
+      }
+    },
   });
 
   const myGuess = state?.guesses.find((g) => g.player_id === state.self.player_id);
@@ -297,6 +483,21 @@ export function GameBoard() {
       const data = await api.submitHint(hintText.trim());
       setState(data);
       setHintText('');
+      play('submit');
+      vibrate('tap');
+      toast(t('toast_hintSent'), 'success');
+      const newHints = data.hints.filter((h) => h.author_id === data.self.player_id);
+      const latest = newHints[newHints.length - 1];
+      if (latest) {
+        setHighlightedHintIds((prev) => new Set(prev).add(latest.id));
+        setTimeout(() => {
+          setHighlightedHintIds((prev) => {
+            const next = new Set(prev);
+            next.delete(latest.id);
+            return next;
+          });
+        }, 2000);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -310,6 +511,7 @@ export function GameBoard() {
     try {
       const data = await api.deleteHint(hintId);
       setState(data);
+      vibrate('tap');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -325,6 +527,8 @@ export function GameBoard() {
         skip ? { skip: true } : { text: guessText.trim() }
       );
       setState(data);
+      play('submit');
+      vibrate('tap');
       if (skip) {
         setSkipConfirmOpen(false);
       } else {
@@ -343,6 +547,10 @@ export function GameBoard() {
     try {
       const data = await api.submitGuessVote(guessId, isCorrect);
       setState(data);
+      play(isCorrect ? 'correct' : 'wrong');
+      vibrate(isCorrect ? 'success' : 'error');
+      setVoteFlashId(guessId);
+      setTimeout(() => setVoteFlashId(null), 400);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -355,6 +563,8 @@ export function GameBoard() {
     try {
       const data = await api.submitAuthorHintRating(authorId, rating);
       setState(data);
+      play('tap');
+      vibrate('tap');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -390,9 +600,16 @@ export function GameBoard() {
 
   if (!state) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>{error || t('loading')}</p>
-      </div>
+      <>
+        <ConnectionBanner status={wsStatus} />
+        {error ? (
+          <div className="min-h-screen flex items-center justify-center">
+            <p className="text-red-400">{error}</p>
+          </div>
+        ) : (
+          <GameBoardSkeleton />
+        )}
+      </>
     );
   }
 
@@ -408,31 +625,29 @@ export function GameBoard() {
 
   return (
     <div className={`min-h-screen p-4 max-w-5xl mx-auto ${showGuessActionBar ? 'pb-28' : ''}`}>
-      <motion.div
-        key={phase}
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        className="mb-6 flex flex-wrap items-center justify-between gap-4"
-      >
-        <div>
-          <h1 className="text-2xl font-bold text-straw">
-            {t('round', { n: state.round.number })}
-          </h1>
-          <p className="text-parchment/70">
-            {isPlayPhase ? t('phase_hints') : t(`phase_${phase}`)}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {state.game_type === 'cooperative' && state.coop && (
-            <div className="text-sm bg-ocean/60 px-4 py-2 rounded-xl border border-straw/30">
-              {t('successRounds')}: {state.coop.success_rounds} / {state.coop.target_rounds}
-            </div>
-          )}
-          <Button variant="ghost" onClick={() => navigate('/', { replace: true })}>
-            {t('exitGame')}
-          </Button>
-        </div>
-      </motion.div>
+      <ConnectionBanner status={wsStatus} />
+
+      <div className="flex flex-wrap items-center justify-end gap-2 mb-2">
+        <SfxToggle />
+        <Button variant="ghost" onClick={() => navigate('/', { replace: true })}>
+          {t('exitGame')}
+        </Button>
+      </div>
+
+      <PhaseBanner
+        state={state}
+        pendingOthersCount={pendingOthersGuesses.length}
+        isGuessPending={!!isGuessPending}
+        hasRevealedCharacter={hasRevealedCharacter}
+        isPlayPhase={isPlayPhase}
+      />
+
+      <RerollFloatingBanner
+        state={state}
+        loading={loading}
+        t={t}
+        onConfirm={handleRerollConfirm}
+      />
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
         <div className="min-w-0">
@@ -442,6 +657,7 @@ export function GameBoard() {
             displayName={state.self.display_name}
             language={lang}
             revealed={!!state.self.character}
+            revealSkipped={hasSkippedGuess}
           />
           <CharacterRerollPanel
             state={state}
@@ -482,14 +698,29 @@ export function GameBoard() {
         >
           {isPlayPhase && (
             <>
+              <PendingJudgingCard
+                guesses={pendingOthersGuesses}
+                state={state}
+                loading={loading}
+                t={t}
+                onVote={handleVote}
+                voteFlashId={voteFlashId}
+              />
+
               {myHints.length > 0 && (
                 <Card className="mb-4">
                   <h2 className="text-lg font-bold mb-3">{t('hintsSent')}</h2>
                   <div className="space-y-3">
                     {myHints.map((h) => (
-                      <div
+                      <motion.div
                         key={h.id}
-                        className="flex items-start gap-2 px-4 py-3 rounded-xl text-sm bg-straw/10 border border-straw/30"
+                        layout
+                        initial={{ opacity: 0, x: -12 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className={clsx(
+                          'flex items-start gap-2 px-4 py-3 rounded-xl text-sm bg-straw/10 border border-straw/30',
+                          highlightedHintIds.has(h.id) && 'animate-highlight-pulse'
+                        )}
                       >
                         <HintText hint={h} state={state} lang={lang} t={t} className="flex-1" />
                         {canHint && !h.is_withdrawn && (
@@ -502,7 +733,7 @@ export function GameBoard() {
                             {t('withdrawHint')}
                           </Button>
                         )}
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 </Card>
@@ -527,12 +758,18 @@ export function GameBoard() {
                           ) : (
                             <div className="space-y-2">
                               {hints.map((h) => (
-                                <div
+                                <motion.div
                                   key={h.id}
-                                  className="px-3 py-2 rounded-lg text-sm bg-ocean/60 border border-parchment/10"
+                                  layout
+                                  initial={{ opacity: 0, y: 8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className={clsx(
+                                    'px-3 py-2 rounded-lg text-sm bg-ocean/60 border border-parchment/10',
+                                    highlightedHintIds.has(h.id) && 'animate-highlight-pulse'
+                                  )}
                                 >
                                   <HintText hint={h} state={state} lang={lang} t={t} />
-                                </div>
+                                </motion.div>
                               ))}
                             </div>
                           )}
@@ -540,43 +777,6 @@ export function GameBoard() {
                       );
                     })}
                   </div>
-                </Card>
-              )}
-
-              {pendingOthersGuesses.length > 0 && (
-                <Card className="mb-4">
-                  <h2 className="text-lg font-bold mb-3">{t('phase_judging')}</h2>
-                  {pendingOthersGuesses.map((g) => {
-                    const alreadyVoted = g.votes.some(
-                      (v) => v.voter_id === state.self.player_id
-                    );
-                    return (
-                      <div key={g.id} className="mb-4 p-4 bg-ocean/40 rounded-xl">
-                        <p className="mb-2">
-                          {t('judgeGuess', {
-                            name: g.player_name,
-                            text: g.guess_text,
-                          })}
-                        </p>
-                        {!alreadyVoted ? (
-                          <div className="flex gap-2">
-                            <Button onClick={() => handleVote(g.id, true)} disabled={loading}>
-                              {t('voteCorrect')}
-                            </Button>
-                            <Button
-                              variant="danger"
-                              onClick={() => handleVote(g.id, false)}
-                              disabled={loading}
-                            >
-                              {t('voteIncorrect')}
-                            </Button>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-green-400">{t('waitingForOthers')}</p>
-                        )}
-                      </div>
-                    );
-                  })}
                 </Card>
               )}
 
@@ -590,7 +790,7 @@ export function GameBoard() {
                       placeholder={t('hintPlaceholder')}
                       onKeyDown={(e) => e.key === 'Enter' && handleHint()}
                     />
-                    <Button onClick={handleHint} disabled={loading || !hintText.trim()}>
+                    <Button onClick={handleHint} disabled={loading || !hintText.trim()} loading={loading}>
                       {t('sendHint')}
                     </Button>
                   </div>
@@ -614,7 +814,7 @@ export function GameBoard() {
                       {(myGuess?.guess_history?.length ?? 0) > 0 && (
                         <>
                           {myGuess?.verdict === 'incorrect' ? (
-                            <WrongGuessesList history={myGuess.guess_history ?? []} t={t} />
+                            <WrongGuessesList history={myGuess.guess_history ?? []} t={t} shakeKey={shakeKey} />
                           ) : (
                             <GuessHistoryList history={myGuess.guess_history ?? []} t={t} />
                           )}
@@ -665,15 +865,18 @@ export function GameBoard() {
                   </div>
 
                   {state.game_type === 'cooperative' && (
-                    <p
-                      className={`text-center font-semibold ${
+                    <motion.p
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className={`text-center font-semibold text-lg ${
                         state.round_result.is_coop_success ? 'text-green-400' : 'text-red-400'
                       }`}
                     >
+                      {state.round_result.is_coop_success ? '🎉 ' : '😔 '}
                       {state.round_result.is_coop_success
                         ? t('roundCoopSuccess')
                         : t('roundCoopFail')}
-                    </p>
+                    </motion.p>
                   )}
 
                   {state.game_type === 'competitive' && state.round_result.scores && (
@@ -783,7 +986,7 @@ export function GameBoard() {
 
           {(phase === 'settlement' || phase === 'complete') && (
             <Card>
-              <p className="text-center text-lg animate-pulse">{t('loading')}</p>
+              <SettlementWaiting />
             </Card>
           )}
         </motion.div>
@@ -795,23 +998,43 @@ export function GameBoard() {
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-straw/30 bg-ocean/95 backdrop-blur-md shadow-[0_-8px_24px_rgba(0,0,0,0.25)]">
           <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between gap-4">
             {!hasSkippedGuess && (
+              <motion.div className="flex-1" whileTap={canSubmitGuess && !isGuessPending ? { scale: 0.98 } : {}}>
               <Button
-                className={`flex-1 ${
+                className={`w-full ${
                   hasGuessedCorrectly
                     ? 'bg-green-600 text-white hover:bg-green-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
                     : isGuessPending
                       ? 'disabled:opacity-70 cursor-default hover:scale-100 active:scale-100'
-                      : ''
+                      : canSubmitGuess
+                        ? 'animate-pulse shadow-lg shadow-straw/40'
+                        : ''
                 }`}
                 disabled={loading || !canSubmitGuess}
-                onClick={() => setGuessModalOpen(true)}
+                onClick={() => {
+                  play('tap');
+                  setGuessModalOpen(true);
+                }}
               >
                 {hasGuessedCorrectly
                   ? t('guessButtonCorrect')
                   : isGuessPending
-                    ? t('guessButtonReviewing')
+                    ? (
+                      <span className="inline-flex items-center gap-2">
+                        {t('guessButtonReviewing')}
+                        <span className="inline-flex gap-0.5">
+                          {[0, 1, 2].map((i) => (
+                            <span
+                              key={i}
+                              className="w-1.5 h-1.5 rounded-full bg-current animate-bounce"
+                              style={{ animationDelay: `${i * 0.15}s` }}
+                            />
+                          ))}
+                        </span>
+                      </span>
+                    )
                     : t('guessButton')}
               </Button>
+              </motion.div>
             )}
             {!hasGuessedCorrectly && (
               <Button
@@ -841,13 +1064,15 @@ export function GameBoard() {
           onChange={(e) => setGuessText(e.target.value)}
           placeholder={t('guessPlaceholder')}
           autoFocus
-          onKeyDown={(e) => e.key === 'Enter' && guessText.trim() && handleGuess(false)}
+          disabled={loading}
+          onKeyDown={(e) => e.key === 'Enter' && guessText.trim() && !loading && handleGuess(false)}
         />
         <div className="flex gap-2 mt-4">
           <Button
             className="flex-1"
             onClick={() => handleGuess(false)}
             disabled={loading || !guessText.trim()}
+            loading={loading}
           >
             {t('submitGuess')}
           </Button>
@@ -868,6 +1093,7 @@ export function GameBoard() {
             className="flex-1"
             onClick={() => handleGuess(true)}
             disabled={loading}
+            loading={loading}
           >
             {t('confirmSkipYes')}
           </Button>

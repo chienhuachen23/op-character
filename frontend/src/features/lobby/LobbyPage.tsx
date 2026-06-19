@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   api,
   clearSession,
@@ -14,14 +14,47 @@ import {
 } from '../../api/client';
 import { useRoomWebSocket } from '../../ws/useRoomWebSocket';
 import { Card, Button, Input, Select } from '../../components/ui';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { useToast } from '../../components/Toast';
 import { setUILanguage } from '../../i18n';
+import { useGameSfx } from '../../hooks/useGameSfx';
+import { useHaptic } from '../../hooks/useHaptic';
+import { LoadingScreen } from '../../components/Spinner';
+
+function DepartureOverlay({ text, onDone }: { text: string; onDone: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onDone, 800);
+    return () => clearTimeout(timer);
+  }, [onDone]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ocean/90 backdrop-blur-sm"
+    >
+      <motion.p
+        initial={{ scale: 0.5, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="text-4xl font-extrabold text-straw drop-shadow-lg"
+      >
+        ⚓ {text}
+      </motion.p>
+    </motion.div>
+  );
+}
 
 export function LobbyPage() {
   const { code } = useParams<{ code: string }>();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast } = useToast();
+  const { play } = useGameSfx();
+  const { vibrate } = useHaptic();
   const mountedRef = useRef(true);
+  const prevPlayerCountRef = useRef(0);
   const [room, setRoom] = useState<Room | null>(null);
   const [preview, setPreview] = useState<RoomPreview | null>(null);
   const [needsJoin, setNeedsJoin] = useState(() => !sessionMatchesRoom(code));
@@ -29,6 +62,8 @@ export function LobbyPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [departureText, setDepartureText] = useState<string | null>(null);
+  const [pendingNavigate, setPendingNavigate] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -60,6 +95,13 @@ export function LobbyPage() {
     try {
       const data = await api.getRoom(code);
       if (!mountedRef.current) return;
+
+      if (data.players.length > prevPlayerCountRef.current && prevPlayerCountRef.current > 0) {
+        play('phase');
+        if (data.players.length === 3) vibrate('success');
+      }
+      prevPlayerCountRef.current = data.players.length;
+
       setRoom(data);
       setNeedsJoin(false);
       setError('');
@@ -83,13 +125,13 @@ export function LobbyPage() {
         setError(msg);
       }
     }
-  }, [code, navigate, fetchPreview, location.pathname]);
+  }, [code, navigate, fetchPreview, location.pathname, play, vibrate]);
 
   useEffect(() => {
     fetchRoom();
   }, [fetchRoom]);
 
-  useRoomWebSocket(needsJoin ? undefined : code, () => {
+  const wsStatus = useRoomWebSocket(needsJoin ? undefined : code, () => {
     if (needsJoin) fetchPreview();
     else fetchRoom();
   });
@@ -107,6 +149,7 @@ export function LobbyPage() {
       storeSession(res.player.token, { id: res.player.id, seat_index: res.player.seat_index }, code);
       setRoom(res.room);
       setNeedsJoin(false);
+      play('submit');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -119,7 +162,10 @@ export function LobbyPage() {
     setLoading(true);
     try {
       await api.startRoom(code);
-      navigate(`/room/${code}/play`);
+      play('phase');
+      vibrate('phase');
+      setDepartureText(t('departureOverlay'));
+      setPendingNavigate(`/room/${code}/play`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -127,17 +173,53 @@ export function LobbyPage() {
     }
   };
 
-  const copyCode = () => {
-    navigator.clipboard.writeText(code || '');
+  const copyWithFeedback = (text: string) => {
+    navigator.clipboard.writeText(text);
     setCopied(true);
+    toast(t('toast_copied'), 'success');
+    vibrate('tap');
+    play('tap');
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const copyCode = () => copyWithFeedback(code || '');
+  const copyLink = () => copyWithFeedback(window.location.href);
+
+  const seatCard = (player: Room['players'][0] | undefined, i: number, showOnline = false) => (
+    <motion.div
+      key={i}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ delay: i * 0.1, type: 'spring', stiffness: 300 }}
+      className={`rounded-xl border p-4 text-center transition-colors ${
+        player
+          ? 'border-straw/50 bg-ocean/50 shadow-md shadow-straw/10'
+          : 'border-straw/20 bg-ocean/40'
+      }`}
+    >
+      <p className="text-xs text-parchment/50">{t('seat')} {i + 1}</p>
+      {player ? (
+        <>
+          <p className="font-bold mt-1">{player.display_name}</p>
+          {showOnline && (
+            <p className="text-xs mt-1 flex items-center justify-center gap-1">
+              {player.is_host && <span className="text-straw">{t('host')} · </span>}
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  player.is_connected ? 'bg-green-400' : 'bg-parchment/30'
+                }`}
+              />
+              <span className={player.is_connected ? 'text-green-400' : 'text-parchment/40'}>
+                {player.is_connected ? t('online') : t('offline')}
+              </span>
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-parchment/30 mt-2">—</p>
+      )}
+    </motion.div>
+  );
 
   if (needsJoin) {
     const players = preview?.players ?? [];
@@ -145,6 +227,7 @@ export function LobbyPage() {
 
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-4">
+        <ConnectionBanner status={wsStatus} />
         <motion.h1
           initial={{ scale: 0.9 }}
           animate={{ scale: 1 }}
@@ -174,15 +257,7 @@ export function LobbyPage() {
 
           {preview && (
             <div className="grid grid-cols-3 gap-2 mb-6">
-              {seats.map((player, i) => (
-                <div
-                  key={i}
-                  className="rounded-xl border border-straw/20 p-3 text-center bg-ocean/40 text-sm"
-                >
-                  <p className="text-xs text-parchment/50">{t('seat')} {i + 1}</p>
-                  <p className="font-medium mt-1">{player?.display_name ?? '—'}</p>
-                </div>
-              ))}
+              {seats.map((player, i) => seatCard(player, i))}
             </div>
           )}
 
@@ -208,11 +283,12 @@ export function LobbyPage() {
                 </Select>
               </div>
               <Button
-                className="w-full"
+                className="w-full py-3"
                 disabled={loading || !displayName.trim()}
+                loading={loading}
                 onClick={handleJoin}
               >
-                {loading ? t('loading') : t('joinThisRoom')}
+                {t('joinThisRoom')}
               </Button>
             </div>
           )}
@@ -225,9 +301,10 @@ export function LobbyPage() {
 
   if (!room) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>{error || t('loading')}</p>
-      </div>
+      <>
+        <ConnectionBanner status={wsStatus} />
+        <LoadingScreen message={error || t('loading')} />
+      </>
     );
   }
 
@@ -240,6 +317,20 @@ export function LobbyPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4">
+      <ConnectionBanner status={wsStatus} />
+      <AnimatePresence>
+        {departureText && pendingNavigate && (
+          <DepartureOverlay
+            text={departureText}
+            onDone={() => {
+              if (pendingNavigate) navigate(pendingNavigate);
+              setDepartureText(null);
+              setPendingNavigate(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       <motion.h1
         initial={{ scale: 0.9 }}
         animate={{ scale: 1 }}
@@ -280,38 +371,16 @@ export function LobbyPage() {
 
         <h2 className="text-lg font-semibold mb-4">{t('players')} (3)</h2>
         <div className="grid grid-cols-3 gap-3 mb-6">
-          {seats.map((player, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="rounded-xl border border-straw/30 p-4 text-center bg-ocean/40"
-            >
-              <p className="text-xs text-parchment/50">{t('seat')} {i + 1}</p>
-              {player ? (
-                <>
-                  <p className="font-bold mt-1">{player.display_name}</p>
-                  <p className="text-xs mt-1">
-                    {player.is_host && <span className="text-straw">{t('host')} · </span>}
-                    <span className={player.is_connected ? 'text-green-400' : 'text-parchment/40'}>
-                      {player.is_connected ? t('online') : t('offline')}
-                    </span>
-                  </p>
-                </>
-              ) : (
-                <p className="text-parchment/30 mt-2">—</p>
-              )}
-            </motion.div>
-          ))}
+          {seats.map((player, i) => seatCard(player, i, true))}
         </div>
 
         {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
 
         {isHost && (
           <Button
-            className="w-full"
+            className={`w-full py-3 ${canStart ? 'animate-pulse shadow-lg shadow-straw/40' : ''}`}
             disabled={!canStart || loading}
+            loading={loading}
             onClick={handleStart}
           >
             {canStart ? t('startGame') : t('needThreePlayers')}

@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { api, type MatchState, type MatchSummary } from '../../api/client';
 import { useRoomWebSocket } from '../../ws/useRoomWebSocket';
 import { Card, Button } from '../../components/ui';
 import { CharacterCard } from '../../components/CharacterCard';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { ResultsSkeleton } from '../../components/Skeleton';
+import { useGameSfx } from '../../hooks/useGameSfx';
+import { useConfetti } from '../../hooks/useConfetti';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { characterName } from '../../i18n';
 
 type RoundSummary = MatchSummary['rounds'][number];
@@ -145,7 +150,13 @@ function RoundRecapCard({
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm">{author.author_name}</span>
                     {isTopHint && (
-                      <span className="text-xs text-straw font-medium">{t('bestHintRound')}</span>
+                      <motion.span
+                        animate={{ rotate: [0, 8, -8, 0] }}
+                        transition={{ repeat: Infinity, duration: 2 }}
+                        className="text-xs text-straw font-medium"
+                      >
+                        {t('bestHintRound')}
+                      </motion.span>
                     )}
                   </div>
                   <div className="text-xs whitespace-nowrap">
@@ -189,10 +200,15 @@ export function ResultsPoster() {
   const { code } = useParams<{ code: string }>();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const { play } = useGameSfx();
+  const { burst } = useConfetti();
+  const reducedMotion = useReducedMotion();
   const [state, setState] = useState<MatchState | null>(null);
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [departureVisible, setDepartureVisible] = useState(false);
+  const celebratedRef = useRef(false);
   const mountedRef = useRef(true);
 
   const lang = i18n.language;
@@ -209,7 +225,8 @@ export function ResultsPoster() {
       const matchState = await api.getCurrentMatch();
       if (!mountedRef.current) return;
       if (matchState.room_status === 'playing') {
-        navigate(`/room/${code}/play`);
+        setDepartureVisible(true);
+        setTimeout(() => navigate(`/room/${code}/play`), 800);
         return;
       }
       setState(matchState);
@@ -225,7 +242,7 @@ export function ResultsPoster() {
     fetchData();
   }, [fetchData]);
 
-  useRoomWebSocket(code, (event) => {
+  const wsStatus = useRoomWebSocket(code, (event) => {
     if (event.type === 'match.updated' || event.type === 'room.updated') {
       fetchData();
     }
@@ -234,13 +251,28 @@ export function ResultsPoster() {
     }
   });
 
+  useEffect(() => {
+    if (!summary || celebratedRef.current) return;
+    celebratedRef.current = true;
+    if (summary.coop?.won) {
+      play('win');
+      burst();
+    } else if (summary.coop && !summary.coop.won) {
+      play('lose');
+    } else if (summary.competitive) {
+      play('win');
+    }
+  }, [summary, play, burst]);
+
   const handleReplay = async () => {
     if (!state) return;
     setLoading(true);
     try {
       const data = await api.requestReplay(state.match_id);
       if (data.room_status === 'playing') {
-        navigate(`/room/${code}/play`);
+        setDepartureVisible(true);
+        play('phase');
+        setTimeout(() => navigate(`/room/${code}/play`), 800);
       } else {
         setState(data);
         await fetchData();
@@ -268,9 +300,16 @@ export function ResultsPoster() {
 
   if (!summary || !state) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>{error || t('loading')}</p>
-      </div>
+      <>
+        <ConnectionBanner status={wsStatus} />
+        {error ? (
+          <div className="min-h-screen flex items-center justify-center">
+            <p className="text-red-400">{error}</p>
+          </div>
+        ) : (
+          <ResultsSkeleton />
+        )}
+      </>
     );
   }
 
@@ -284,12 +323,38 @@ export function ResultsPoster() {
 
   return (
     <div className="min-h-screen p-4 max-w-3xl mx-auto">
+      <ConnectionBanner status={wsStatus} />
+      <AnimatePresence>
+        {departureVisible && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ocean/90 backdrop-blur-sm"
+          >
+            <motion.p
+              initial={{ scale: 0.5 }}
+              animate={{ scale: 1 }}
+              className="text-4xl font-extrabold text-straw"
+            >
+              ⚓ {t('replayDeparture')}
+            </motion.p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
+        initial={reducedMotion ? false : { opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="text-center mb-8"
       >
-        <h1 className="text-4xl font-extrabold text-straw mb-2">⚓ {t('gameOver')}</h1>
+        <h1
+          className={`text-4xl font-extrabold text-straw mb-2 ${
+            summary.coop && !summary.coop.won && !reducedMotion ? 'animate-shake-x' : ''
+          }`}
+        >
+          ⚓ {t('gameOver')}
+        </h1>
         {summary.coop && (
           <p className={`text-2xl font-bold ${summary.coop.won ? 'text-green-400' : 'text-red-400'}`}>
             {summary.coop.won ? t('victory') : t('defeat')}
@@ -307,17 +372,25 @@ export function ResultsPoster() {
           <h2 className="text-xl font-bold text-straw mb-4 text-center">{t('finalRanking')}</h2>
           <div className="space-y-2">
             {rankedPlayers.map((player, index) => (
-              <div
+              <motion.div
                 key={player.player_id}
+                initial={reducedMotion ? false : { opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.15, type: 'spring', stiffness: 200 }}
                 className={`flex items-center gap-3 p-3 rounded-xl ${
                   index === 0
                     ? 'bg-straw/15 border border-straw/40'
                     : 'bg-ocean/40 border border-parchment/10'
                 }`}
               >
-                <span className="text-2xl w-8 text-center">
+                <motion.span
+                  className="text-2xl w-8 text-center"
+                  initial={reducedMotion ? false : { scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: index * 0.15 + 0.1, type: 'spring' }}
+                >
                   {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
-                </span>
+                </motion.span>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold">{player.display_name}</p>
                   {player.character && (
@@ -327,7 +400,7 @@ export function ResultsPoster() {
                   )}
                 </div>
                 <p className="font-bold text-straw text-lg">{player.total_score}</p>
-              </div>
+              </motion.div>
             ))}
           </div>
         </Card>
@@ -359,6 +432,16 @@ export function ResultsPoster() {
 
       <Card className="mb-6">
         <h2 className="text-lg font-bold mb-4">{t('replayVotes')} ({voteCount}/3)</h2>
+        <div className="flex gap-2 mb-4 justify-center">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className={`w-3 h-3 rounded-full transition-colors ${
+                i < voteCount ? 'bg-green-400' : 'bg-parchment/20'
+              }`}
+            />
+          ))}
+        </div>
         <div className="flex gap-2 mb-4">
           {summary.players.map((p) => (
             <div

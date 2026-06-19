@@ -1,12 +1,18 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { getStoredToken, WS_BASE } from '../api/client';
 
 type WsHandler = (event: { type: string; payload: unknown }) => void;
 
-export function useRoomWebSocket(roomCode: string | undefined, onMessage: WsHandler) {
+export type WsConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
+
+export function useRoomWebSocket(
+  roomCode: string | undefined,
+  onMessage: WsHandler
+): WsConnectionStatus {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onMessageRef = useRef(onMessage);
+  const [status, setStatus] = useState<WsConnectionStatus>('disconnected');
   onMessageRef.current = onMessage;
 
   const clearReconnectTimer = useCallback(() => {
@@ -17,15 +23,26 @@ export function useRoomWebSocket(roomCode: string | undefined, onMessage: WsHand
   }, []);
 
   const connect = useCallback(() => {
-    if (!roomCode) return undefined;
+    if (!roomCode) {
+      setStatus('disconnected');
+      return undefined;
+    }
     const token = getStoredToken();
-    if (!token) return undefined;
+    if (!token) {
+      setStatus('disconnected');
+      return undefined;
+    }
 
     clearReconnectTimer();
+    setStatus((s) => (s === 'connected' ? 'reconnecting' : s === 'disconnected' ? 'reconnecting' : s));
 
     const wsUrl = `${WS_BASE}/ws/rooms/${roomCode}/?token=${token}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      setStatus('connected');
+    };
 
     ws.onmessage = (e) => {
       try {
@@ -39,10 +56,15 @@ export function useRoomWebSocket(roomCode: string | undefined, onMessage: WsHand
     ws.onclose = () => {
       if (wsRef.current !== ws) return;
       wsRef.current = null;
+      setStatus('reconnecting');
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;
         connect();
       }, 2000);
+    };
+
+    ws.onerror = () => {
+      setStatus('reconnecting');
     };
 
     const ping = setInterval(() => {
@@ -58,12 +80,18 @@ export function useRoomWebSocket(roomCode: string | undefined, onMessage: WsHand
         wsRef.current = null;
       }
       ws.close();
+      setStatus('disconnected');
     };
   }, [roomCode, clearReconnectTimer]);
 
   useEffect(() => {
-    if (!roomCode) return;
+    if (!roomCode) {
+      setStatus('disconnected');
+      return;
+    }
     const cleanup = connect();
     return cleanup;
   }, [roomCode, connect]);
+
+  return status;
 }

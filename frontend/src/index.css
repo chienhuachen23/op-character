@@ -16,3 +16,71 @@ body {
 #root {
   @apply min-h-screen;
 }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 20% 80%, rgba(251, 191, 36, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(3, 105, 161, 0.15) 0%, transparent 50%);
+  animation: ocean-glow 12s ease-in-out infinite alternate;
+  z-index: 0;
+}
+
+@keyframes ocean-glow {
+  0% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.3); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flash-green {
+  0% { background-color: rgba(34, 197, 94, 0.3); }
+  100% { background-color: transparent; }
+}
+
+@keyframes highlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.2); }
+}
+
+.animate-shake-x {
+  animation: shake-x 0.4s ease-in-out;
+}
+
+.animate-flash-red {
+  animation: flash-red 0.4s ease-out;
+}
+
+.animate-flash-green {
+  animation: flash-green 0.4s ease-out;
+}
+
+.animate-highlight-pulse {
+  animation: highlight-pulse 1.5s ease-in-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+
+  .animate-shake-x,
+  .animate-flash-red,
+  .animate-flash-green,
+  .animate-highlight-pulse {
+    animation: none;
+  }
+}

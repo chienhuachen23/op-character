@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { api, storeSession } from '../../api/client';
-import { Card, Button, Input, Select } from '../../components/ui';
+import { Card, Button, Input, Select, SfxToggle } from '../../components/ui';
 import { setUILanguage } from '../../i18n';
+import { useGameSfx } from '../../hooks/useGameSfx';
 
 type Tab = 'create' | 'join';
 
 export function HomePage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const { play } = useGameSfx();
   const [tab, setTab] = useState<Tab>('create');
   const [displayName, setDisplayName] = useState('');
   const [roomCode, setRoomCode] = useState('');
@@ -24,6 +26,7 @@ export function HomePage() {
   const [correctPts, setCorrectPts] = useState(3);
   const [likePts, setLikePts] = useState(1);
   const [dislikePts, setDislikePts] = useState(-1);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -56,6 +59,7 @@ export function HomePage() {
         settings,
       });
       storeSession(res.player.token, { id: res.player.id, seat_index: res.player.seat_index }, res.room.code);
+      play('submit');
       navigate(`/room/${res.room.code}`);
     } catch (e) {
       setError((e as Error).message);
@@ -75,6 +79,7 @@ export function HomePage() {
         language: lang,
       });
       storeSession(res.player.token, { id: res.player.id, seat_index: res.player.seat_index }, res.room.code);
+      play('submit');
       navigate(`/room/${res.room.code}`);
     } catch (e) {
       setError((e as Error).message);
@@ -82,6 +87,43 @@ export function HomePage() {
       setLoading(false);
     }
   };
+
+  const competitiveRules = gameType === 'competitive' && tab === 'create' && (
+    <>
+      <div>
+        <label className="text-sm text-parchment/70 mb-1 block">{t('selectMode')}</label>
+        <Select value={endCondition} onChange={(e) => setEndCondition(e.target.value as 'rounds' | 'score')}>
+          <option value="rounds">{t('endByRounds')}</option>
+          <option value="score">{t('endByScore')}</option>
+        </Select>
+      </div>
+      {endCondition === 'rounds' ? (
+        <div>
+          <label className="text-sm text-parchment/70 mb-1 block">{t('maxRounds')}</label>
+          <Input type="number" min={1} max={20} value={maxRounds} onChange={(e) => setMaxRounds(+e.target.value)} />
+        </div>
+      ) : (
+        <div>
+          <label className="text-sm text-parchment/70 mb-1 block">{t('targetScore')}</label>
+          <Input type="number" min={1} value={targetScore} onChange={(e) => setTargetScore(+e.target.value)} />
+        </div>
+      )}
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-xs text-parchment/70 mb-1 block">{t('correctGuessPts')}</label>
+          <Input type="number" value={correctPts} onChange={(e) => setCorrectPts(+e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-parchment/70 mb-1 block">{t('hintLikedPts')}</label>
+          <Input type="number" value={likePts} onChange={(e) => setLikePts(+e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-parchment/70 mb-1 block">{t('hintDislikedPts')}</label>
+          <Input type="number" value={dislikePts} onChange={(e) => setDislikePts(+e.target.value)} />
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4">
@@ -94,34 +136,60 @@ export function HomePage() {
           ⚓ {t('appTitle')}
         </h1>
         <p className="text-parchment/70 mt-2">{t('appSubtitle')}</p>
-        <button
-          type="button"
-          onClick={() => navigate('/admin')}
-          className="mt-3 text-xs text-parchment/40 hover:text-straw transition-colors underline-offset-2 hover:underline"
-        >
-          {t('adminEntry')}
-        </button>
+        <div className="flex items-center justify-center gap-4 mt-3">
+          <SfxToggle />
+          <button
+            type="button"
+            onClick={() => navigate('/admin')}
+            className="text-xs text-parchment/40 hover:text-straw transition-colors underline-offset-2 hover:underline"
+          >
+            {t('adminEntry')}
+          </button>
+        </div>
       </motion.div>
 
       <Card className="w-full max-w-lg">
-        <div className="flex gap-2 mb-6">
+        <div className="relative flex gap-2 mb-6">
           <Button
             variant={tab === 'create' ? 'primary' : 'ghost'}
             className="flex-1"
-            onClick={() => setTab('create')}
+            onClick={() => {
+              play('tap');
+              setTab('create');
+            }}
           >
             {t('createRoom')}
           </Button>
           <Button
             variant={tab === 'join' ? 'primary' : 'ghost'}
             className="flex-1"
-            onClick={() => setTab('join')}
+            onClick={() => {
+              play('tap');
+              setTab('join');
+            }}
           >
             {t('joinRoom')}
           </Button>
+          <motion.div
+            layoutId="home-tab-indicator"
+            className="absolute -bottom-1 h-0.5 bg-straw rounded-full"
+            style={{
+              width: 'calc(50% - 4px)',
+              left: tab === 'create' ? '0' : 'calc(50% + 4px)',
+            }}
+            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+          />
         </div>
 
-        <div className="space-y-4">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, x: tab === 'create' ? -16 : 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: tab === 'create' ? 16 : -16 }}
+            transition={{ duration: 0.2 }}
+            className="space-y-4"
+          >
           <div>
             <label className="text-sm text-parchment/70 mb-1 block">{t('displayName')}</label>
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={32} />
@@ -182,40 +250,27 @@ export function HomePage() {
                   </label>
                 </>
               ) : (
-                <>
-                  <div>
-                    <label className="text-sm text-parchment/70 mb-1 block">{t('selectMode')}</label>
-                    <Select value={endCondition} onChange={(e) => setEndCondition(e.target.value as 'rounds' | 'score')}>
-                      <option value="rounds">{t('endByRounds')}</option>
-                      <option value="score">{t('endByScore')}</option>
-                    </Select>
-                  </div>
-                  {endCondition === 'rounds' ? (
-                    <div>
-                      <label className="text-sm text-parchment/70 mb-1 block">{t('maxRounds')}</label>
-                      <Input type="number" min={1} max={20} value={maxRounds} onChange={(e) => setMaxRounds(+e.target.value)} />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="text-sm text-parchment/70 mb-1 block">{t('targetScore')}</label>
-                      <Input type="number" min={1} value={targetScore} onChange={(e) => setTargetScore(+e.target.value)} />
-                    </div>
-                  )}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-xs text-parchment/70 mb-1 block">{t('correctGuessPts')}</label>
-                      <Input type="number" value={correctPts} onChange={(e) => setCorrectPts(+e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs text-parchment/70 mb-1 block">{t('hintLikedPts')}</label>
-                      <Input type="number" value={likePts} onChange={(e) => setLikePts(+e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs text-parchment/70 mb-1 block">{t('hintDislikedPts')}</label>
-                      <Input type="number" value={dislikePts} onChange={(e) => setDislikePts(+e.target.value)} />
-                    </div>
-                  </div>
-                </>
+                <div>
+                  <button
+                    type="button"
+                    className="text-sm text-straw hover:text-straw-dark flex items-center gap-1"
+                    onClick={() => setRulesOpen((o) => !o)}
+                  >
+                    {rulesOpen ? '▼' : '▶'} {t('competitiveRules')}
+                  </button>
+                  <AnimatePresence>
+                    {rulesOpen && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden space-y-3 mt-3"
+                      >
+                        {competitiveRules}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
             </>
           )}
@@ -223,13 +278,15 @@ export function HomePage() {
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
           <Button
-            className="w-full"
+            className="w-full py-3 text-lg"
             disabled={loading || !displayName.trim()}
+            loading={loading}
             onClick={tab === 'create' ? handleCreate : handleJoin}
           >
-            {loading ? t('loading') : tab === 'create' ? t('createRoom') : t('joinRoom')}
+            {tab === 'create' ? t('createRoom') : t('joinRoom')}
           </Button>
-        </div>
+          </motion.div>
+        </AnimatePresence>
       </Card>
     </div>
   );
