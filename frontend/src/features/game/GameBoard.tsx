@@ -7,6 +7,7 @@ import { api, type MatchState } from '../../api/client';
 import { useRoomWebSocket } from '../../ws/useRoomWebSocket';
 import { Card, Button, Input, Modal, SfxToggle } from '../../components/ui';
 import { CharacterCard } from '../../components/CharacterCard';
+import { CharacterRevealOverlay } from '../../components/CharacterRevealOverlay';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { PhaseBanner, SettlementWaiting } from '../../components/PhaseBanner';
 import { GameBoardSkeleton } from '../../components/Skeleton';
@@ -156,136 +157,6 @@ function WrongGuessesList({
   );
 }
 
-function PendingJudgingCard({
-  guesses,
-  state,
-  loading,
-  t,
-  onVote,
-  voteFlashId,
-}: {
-  guesses: MatchState['guesses'];
-  state: MatchState;
-  loading: boolean;
-  t: (key: string, opts?: Record<string, string>) => string;
-  onVote: (guessId: number, isCorrect: boolean) => void;
-  voteFlashId: number | null;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (guesses.length > 0 && ref.current) {
-      ref.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [guesses.length]);
-
-  if (!guesses.length) return null;
-
-  return (
-    <div ref={ref}>
-    <Card className="mb-4 ring-2 ring-amber-400/50 animate-highlight-pulse">
-      <h2 className="text-lg font-bold mb-3 text-amber-200">{t('phase_judging')}</h2>
-      {guesses.map((g) => {
-        const myVote = g.votes.find((v) => v.voter_id === state.self.player_id);
-        const alreadyVoted = !!myVote;
-        return (
-          <div
-            key={g.id}
-            className={clsx(
-              'mb-4 p-4 rounded-xl transition-colors',
-              voteFlashId === g.id ? 'animate-flash-green' : 'bg-ocean/40'
-            )}
-          >
-            <p className="mb-2">
-              {t('judgeGuess', { name: g.player_name, text: g.guess_text })}
-            </p>
-            {!alreadyVoted ? (
-              <div className="flex gap-2">
-                <Button onClick={() => onVote(g.id, true)} disabled={loading}>
-                  {t('voteCorrect')}
-                </Button>
-                <Button variant="danger" onClick={() => onVote(g.id, false)} disabled={loading}>
-                  {t('voteIncorrect')}
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-green-400">
-                {myVote?.is_correct ? t('youVotedCorrect') : t('youVotedIncorrect')} ·{' '}
-                {t('waitingForOthers')}
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </Card>
-    </div>
-  );
-}
-
-function RerollFloatingBanner({
-  state,
-  loading,
-  t,
-  onConfirm,
-}: {
-  state: MatchState;
-  loading: boolean;
-  t: (key: string, opts?: Record<string, string>) => string;
-  onConfirm: (targetPlayerId: number, approved: boolean) => void;
-}) {
-  const reroll = state.character_reroll;
-  if (reroll?.status !== 'pending' || !reroll) return null;
-
-  const selfId = state.self.player_id;
-  const isConfirmer = selfId === reroll.confirmer_player_id;
-  const isTarget = selfId === reroll.target_player_id;
-  const isRequester = selfId === reroll.requester_player_id;
-
-  if (!isConfirmer && !isTarget && !isRequester) return null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -12 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="mb-4 rounded-xl border border-amber-400/60 bg-amber-500/15 px-4 py-3 backdrop-blur-sm"
-    >
-      {isConfirmer ? (
-        <>
-          <p className="text-sm text-parchment/90 mb-3 text-center">
-            {t('rerollConfirmPrompt', {
-              requester: reroll.requester_player_name,
-              target: reroll.target_player_name,
-            })}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              className="flex-1"
-              disabled={loading}
-              onClick={() => onConfirm(reroll.target_player_id, true)}
-            >
-              {t('rerollApprove')}
-            </Button>
-            <Button
-              className="flex-1"
-              variant="ghost"
-              disabled={loading}
-              onClick={() => onConfirm(reroll.target_player_id, false)}
-            >
-              {t('rerollReject')}
-            </Button>
-          </div>
-        </>
-      ) : (
-        <p className="text-sm text-center text-amber-100">
-          {isRequester
-            ? t('rerollWaitingConfirm')
-            : t('rerollPendingForYou')}
-        </p>
-      )}
-    </motion.div>
-  );
-}
-
 function CharacterRerollPanel({
   state,
   targetPlayerId,
@@ -293,7 +164,7 @@ function CharacterRerollPanel({
   loading,
   t,
   onRequest,
-  onConfirm,
+  interactionBlocked,
 }: {
   state: MatchState;
   targetPlayerId: number;
@@ -301,7 +172,7 @@ function CharacterRerollPanel({
   loading: boolean;
   t: (key: string, opts?: Record<string, string>) => string;
   onRequest: (targetPlayerId: number) => void;
-  onConfirm: (targetPlayerId: number, approved: boolean) => void;
+  interactionBlocked: boolean;
 }) {
   if (!isPlayPhase) return null;
 
@@ -311,35 +182,6 @@ function CharacterRerollPanel({
     reroll?.status === 'pending' && reroll.target_player_id === targetPlayerId;
 
   if (pendingForTarget && reroll) {
-    if (selfId === reroll.confirmer_player_id) {
-      return (
-        <div className="mt-2 space-y-2">
-          <p className="text-xs text-parchment/70 text-center">
-            {t('rerollConfirmPrompt', {
-              requester: reroll.requester_player_name,
-              target: reroll.target_player_name,
-            })}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              className="flex-1 text-sm py-2"
-              disabled={loading}
-              onClick={() => onConfirm(targetPlayerId, true)}
-            >
-              {t('rerollApprove')}
-            </Button>
-            <Button
-              className="flex-1 text-sm py-2"
-              variant="ghost"
-              disabled={loading}
-              onClick={() => onConfirm(targetPlayerId, false)}
-            >
-              {t('rerollReject')}
-            </Button>
-          </div>
-        </div>
-      );
-    }
     if (selfId === reroll.requester_player_id) {
       return (
         <p className="text-xs text-parchment/60 mt-2 text-center">{t('rerollWaitingConfirm')}</p>
@@ -358,7 +200,7 @@ function CharacterRerollPanel({
       <Button
         variant="ghost"
         className="mt-2 w-full text-sm"
-        disabled={loading}
+        disabled={loading || interactionBlocked}
         onClick={() => onRequest(targetPlayerId)}
       >
         {t('rerollRequest')}
@@ -382,7 +224,9 @@ export function GameBoard() {
   const [loading, setLoading] = useState(false);
   const [highlightedHintIds, setHighlightedHintIds] = useState<Set<number>>(new Set());
   const [shakeKey, setShakeKey] = useState(0);
-  const [voteFlashId, setVoteFlashId] = useState<number | null>(null);
+  const [selfRevealComplete, setSelfRevealComplete] = useState(false);
+  const [showRevealOverlay, setShowRevealOverlay] = useState(false);
+  const prevHadCharacterRef = useRef<boolean | null>(null);
   const mountedRef = useRef(true);
   const { toast } = useToast();
   const { play } = useGameSfx();
@@ -475,6 +319,28 @@ export function GameBoard() {
       myGuess.verdict === 'incorrect' ||
       (myGuess.guess_history?.length ?? 0) > 0);
 
+  useEffect(() => {
+    if (!state) return;
+    const hasChar = !!state.self.character;
+
+    if (prevHadCharacterRef.current === null) {
+      prevHadCharacterRef.current = hasChar;
+      if (hasChar) setSelfRevealComplete(true);
+      return;
+    }
+
+    const prev = prevHadCharacterRef.current;
+    if (prev && !hasChar) {
+      setSelfRevealComplete(false);
+      setShowRevealOverlay(false);
+    } else if (!prev && hasChar) {
+      setShowRevealOverlay(true);
+      setSelfRevealComplete(false);
+    }
+
+    prevHadCharacterRef.current = hasChar;
+  }, [state?.self.character, state]);
+
   const handleHint = async () => {
     if (!hintText.trim()) return;
     setLoading(true);
@@ -549,8 +415,6 @@ export function GameBoard() {
       setState(data);
       play(isCorrect ? 'correct' : 'wrong');
       vibrate(isCorrect ? 'success' : 'error');
-      setVoteFlashId(guessId);
-      setTimeout(() => setVoteFlashId(null), 400);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -623,6 +487,23 @@ export function GameBoard() {
       g.verdict === 'pending'
   );
 
+  const guessNeedingVote = pendingOthersGuesses.find(
+    (g) => !g.votes.some((v) => v.voter_id === state.self.player_id)
+  );
+
+  const rerollPending = state.character_reroll;
+  const rerollModalOpen =
+    isPlayPhase &&
+    rerollPending?.status === 'pending' &&
+    state.self.player_id === rerollPending.confirmer_player_id;
+
+  const judgeModalOpen = isPlayPhase && !!guessNeedingVote;
+
+  const interactionBlocked =
+    showRevealOverlay || judgeModalOpen || rerollModalOpen;
+
+  const selfCardRevealed = selfRevealComplete && !!state.self.character;
+
   return (
     <div className={`min-h-screen p-4 max-w-5xl mx-auto ${showGuessActionBar ? 'pb-28' : ''}`}>
       <ConnectionBanner status={wsStatus} />
@@ -638,15 +519,8 @@ export function GameBoard() {
         state={state}
         pendingOthersCount={pendingOthersGuesses.length}
         isGuessPending={!!isGuessPending}
-        hasRevealedCharacter={hasRevealedCharacter}
+        hasRevealedCharacter={selfCardRevealed}
         isPlayPhase={isPlayPhase}
-      />
-
-      <RerollFloatingBanner
-        state={state}
-        loading={loading}
-        t={t}
-        onConfirm={handleRerollConfirm}
       />
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
@@ -656,7 +530,7 @@ export function GameBoard() {
             character={state.self.character}
             displayName={state.self.display_name}
             language={lang}
-            revealed={!!state.self.character}
+            revealed={selfCardRevealed}
             revealSkipped={hasSkippedGuess}
           />
           <CharacterRerollPanel
@@ -666,7 +540,7 @@ export function GameBoard() {
             loading={loading}
             t={t}
             onRequest={handleRerollRequest}
-            onConfirm={handleRerollConfirm}
+            interactionBlocked={interactionBlocked}
           />
         </div>
         {state.others.map((o) => (
@@ -683,7 +557,7 @@ export function GameBoard() {
               loading={loading}
               t={t}
               onRequest={handleRerollRequest}
-              onConfirm={handleRerollConfirm}
+              interactionBlocked={interactionBlocked}
             />
           </div>
         ))}
@@ -698,15 +572,6 @@ export function GameBoard() {
         >
           {isPlayPhase && (
             <>
-              <PendingJudgingCard
-                guesses={pendingOthersGuesses}
-                state={state}
-                loading={loading}
-                t={t}
-                onVote={handleVote}
-                voteFlashId={voteFlashId}
-              />
-
               {myHints.length > 0 && (
                 <Card className="mb-4">
                   <h2 className="text-lg font-bold mb-3">{t('hintsSent')}</h2>
@@ -788,9 +653,14 @@ export function GameBoard() {
                       value={hintText}
                       onChange={(e) => setHintText(e.target.value)}
                       placeholder={t('hintPlaceholder')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleHint()}
+                      disabled={interactionBlocked}
+                      onKeyDown={(e) => e.key === 'Enter' && !interactionBlocked && handleHint()}
                     />
-                    <Button onClick={handleHint} disabled={loading || !hintText.trim()} loading={loading}>
+                    <Button
+                      onClick={handleHint}
+                      disabled={loading || !hintText.trim() || interactionBlocked}
+                      loading={loading}
+                    >
                       {t('sendHint')}
                     </Button>
                   </div>
@@ -1009,8 +879,9 @@ export function GameBoard() {
                         ? 'animate-pulse shadow-lg shadow-straw/40'
                         : ''
                 }`}
-                disabled={loading || !canSubmitGuess}
+                disabled={loading || !canSubmitGuess || interactionBlocked}
                 onClick={() => {
+                  if (interactionBlocked) return;
                   play('tap');
                   setGuessModalOpen(true);
                 }}
@@ -1044,8 +915,8 @@ export function GameBoard() {
                     ? 'bg-red-600 text-white border-red-600 hover:bg-red-600 disabled:opacity-100 cursor-default shadow-none hover:scale-100 active:scale-100'
                     : 'text-white border border-parchment/50 bg-ocean/70 hover:bg-ocean/90 disabled:opacity-70 disabled:text-white cursor-default hover:scale-100 active:scale-100'
                 }`}
-                disabled={loading || !canSubmitGuess}
-                onClick={() => setSkipConfirmOpen(true)}
+                disabled={loading || !canSubmitGuess || interactionBlocked}
+                onClick={() => !interactionBlocked && setSkipConfirmOpen(true)}
               >
                 {hasSkippedGuess ? t('skipButtonSurrender') : t('skipButtonShort')}
               </Button>
@@ -1105,6 +976,93 @@ export function GameBoard() {
             {t('cancel')}
           </Button>
         </div>
+      </Modal>
+
+      {showRevealOverlay && state.self.character && (
+        <CharacterRevealOverlay
+          character={state.self.character}
+          displayName={state.self.display_name}
+          language={lang}
+          skipped={hasSkippedGuess}
+          onComplete={() => {
+            setShowRevealOverlay(false);
+            setSelfRevealComplete(true);
+          }}
+        />
+      )}
+
+      <Modal
+        open={judgeModalOpen}
+        onClose={() => {}}
+        title={t('phase_judging')}
+        dismissible={false}
+      >
+        {guessNeedingVote && (
+          <>
+            <p className="text-parchment/90 mb-6 text-center">
+              {t('judgeGuess', {
+                name: guessNeedingVote.player_name,
+                text: guessNeedingVote.guess_text,
+              })}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={() => handleVote(guessNeedingVote.id, true)}
+                disabled={loading}
+                loading={loading}
+              >
+                {t('voteCorrect')}
+              </Button>
+              <Button
+                className="flex-1"
+                variant="danger"
+                onClick={() => handleVote(guessNeedingVote.id, false)}
+                disabled={loading}
+                loading={loading}
+              >
+                {t('voteIncorrect')}
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        open={rerollModalOpen}
+        onClose={() => {}}
+        title={t('rerollRequest')}
+        dismissible={false}
+      >
+        {rerollPending && (
+          <>
+            <p className="text-parchment/90 mb-6 text-center">
+              {t('rerollConfirmPrompt', {
+                requester: rerollPending.requester_player_name,
+                target: rerollPending.target_player_name,
+              })}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={() => handleRerollConfirm(rerollPending.target_player_id, true)}
+                disabled={loading}
+                loading={loading}
+              >
+                {t('rerollApprove')}
+              </Button>
+              <Button
+                className="flex-1"
+                variant="ghost"
+                onClick={() => handleRerollConfirm(rerollPending.target_player_id, false)}
+                disabled={loading}
+                loading={loading}
+              >
+                {t('rerollReject')}
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );

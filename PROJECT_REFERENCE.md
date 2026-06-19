@@ -1,7 +1,7 @@
 # OP Character — 项目实现参考文档
 
 > 本文档供后续 Agent 会话快速了解当前实现、架构约定与注意事项。  
-> 最后更新：2026-06-19（v12.2）
+> 最后更新：2026-06-19（v12.4）
 
 ---
 
@@ -15,6 +15,26 @@
 | 玩家鉴权 | `X-Player-Token`（无注册） |
 | 管理员鉴权 | `X-Admin-Key` = 环境变量 `ADMIN_API_KEY` |
 | 内容管理 | 自定义 React `/admin`（非 Django Admin） |
+
+**近期重要变更（v12.3→v12.4）：**
+
+- **音效默认关闭**：`localStorage` 键 `sfx_enabled` 默认 `false`；首页/游戏页 `SfxToggle` 可手动开启
+- **角色揭晓全屏动画**：猜对或放弃后 `CharacterRevealOverlay`（`z-70`）独立图层；`?` 旋转 2.5 圈（900°）翻至正面，修复卡片内嵌 3D 翻转导致的**左右镜像**问题
+- **揭晓期间禁止操作**：`interactionBlocked` 锁定发提示、猜测、重选等；动画结束后才在人物卡展示真名
+- **评判改弹窗**：他人提交猜测后，未投票的两位玩家自动弹出**不可关闭** Modal（猜对/猜错）；页面内不再显示评判卡片
+- **重选确认改弹窗**：第三位确认者仅通过 Modal 同意/拒绝；移除顶部浮动 Banner + 人物卡下方重复按钮
+- **Modal 增强**：`dismissible={false}` 时禁用 Esc、遮罩点击与关闭钮（用于评判/重选等必答场景）
+
+**近期重要变更（v12.2→v12.3）：**
+
+- **共享反馈基础设施**：`ToastProvider` + `useToast`（右上通知）；`useGameSfx`（`public/sounds/*.wav` + Web Audio 合成回退）；`useHaptic`；`usePreferences`（音效/触觉开关）
+- **连接状态**：`useRoomWebSocket` 暴露 `connected | reconnecting | disconnected`；`ConnectionBanner` + Toast 重连提示
+- **GameBoard PhaseBanner**：粘性顶栏动态子状态（评判/猜测/评审中/提示/评价/结算）；合作模式迷你进度条
+- **状态 diff 驱动反馈**：`useMatchStateDiff` 检测新提示、待评判猜测、阶段切换、揭晓、猜错等，触发 Toast/音效/触觉/confetti
+- **Settlement 等待 UI**：草帽 bounce + 进度点，替代纯「加载中」
+- **全流程抛光**：首页 Tab 动画 + 对抗规则折叠；大厅入座动画 + 「出海！」开局 overlay；结算页胜负 confetti/shake + 排名 stagger
+- **路由过渡**：`App.tsx` `AnimatePresence` 页面 fade（0.2s）；`prefers-reduced-motion` 降级
+- **加载骨架**：`GameBoardSkeleton` / `ResultsSkeleton`；Modal/Button loading spinner
 
 **近期重要变更（v12.1→v12.2）：**
 
@@ -144,7 +164,9 @@ op-character/
         ├── features/
         │   ├── home/ lobby/ game/ results/
         │   └── admin/        # ★ 内容管理 CMS（含 characterCsv.ts）
-        └── components/CharacterCard.tsx, CharacterPortrait.tsx
+        ├── components/       # CharacterCard, CharacterPortrait, Toast, PhaseBanner…
+        ├── hooks/            # useGameSfx, useHaptic, useMatchStateDiff, usePreferences…
+        └── public/sounds/    # 短音效 WAV（tap/submit/correct/wrong/phase/win/lose）
 ```
 
 ---
@@ -639,8 +661,9 @@ python manage.py seed_one_piece
 | `player.connected` | 在线状态 |
 | `game.over` | 游戏结束 |
 
-- Hook：`frontend/src/ws/useRoomWebSocket.ts`
+- Hook：`frontend/src/ws/useRoomWebSocket.ts`（返回 `WsConnectionStatus`）
 - 断线 2s 自动重连（**仅组件仍挂载时**；卸载须取消重连，避免退出后跳回房间）
+- 重连/断开时 `ConnectionBanner` 顶栏提示 + Toast（`toast_reconnecting` / `toast_reconnected`）
 - 本地：`USE_INMEMORY_CHANNEL=true`（单进程 daphne 即可）
 
 ---
@@ -659,21 +682,29 @@ python manage.py seed_one_piece
 
 ### 10.1 GameBoard 布局
 
+**顶栏与反馈**：
+
+- `PhaseBanner`（sticky）：轮次 + 动态子状态文案（有待评判 → 评判；可猜 → 猜测；pending → 评审中；已 reveal → 提示；rating/settlement 各自文案）
+- 合作模式：`successRounds / targetRounds` 迷你进度条
+- 右上：`SfxToggle` + 「退出游戏」
+
 **活跃期**（`phase` 非 rating/settlement/complete）：
 
-1. 三人人物卡（自己未 reveal 时 `?`，**猜对或 skip 后** reveal）；他人卡片下可 **重选**（见 §6.3）
-2. **发送的提示**（仅 `is_own`；每条可 **撤回**，撤回后保留 + 删除线）
+1. 三人人物卡（自己未 reveal 时 `?`，**猜对或 skip 后** 经全屏揭晓动画再展示真名，见 §10.5）；他人卡片下可 **重选**（见 §6.3）
+2. **发送的提示**（仅 `is_own`；每条可 **撤回**，撤回后保留 + 删除线；新提示高亮 + Toast）
 3. **收到的提示**：左右两卡，各对应一名其他玩家，内含其全部提示（含已撤回删除线）；**全量展开无滚动截断**
-4. **评判区**（他人 `pending` 猜测 + 投票）
+4. ~~**评判区**（页面内卡片）~~ → **评判 Modal**（§10.5.2）：他人 `pending` 猜测时自动弹窗，两位评判者投票
 5. **发提示**卡片：输入框 + 发送（与猜测分离，见 §10.1.1）
 6. **猜测历史**卡片（§10.1.2）：有内容时才显示（等待评判 / 猜错 / 有 `guess_history`）
 7. **底部固定猜测操作栏**（§10.1.1）：`fixed` 贴底，不随滚动
 
 **评价阶段**（`phase=rating`）：
 
-1. **本轮结果**卡片：每人猜对/猜错/放弃、合作得分或对战分数（含 `+n` 待结算猜对分）
+1. **本轮结果**卡片：每人猜对/猜错/放弃、合作得分或对战分数（含 `+n` 待结算猜对分）；合作成功/失败 emoji 弹入
 2. **你发出的提示**：本人全部提示（只读，含已撤回删除线）
 3. **评价提示**：按作者一张卡，其**未撤回**提示 + 单次赞/踩
+
+**结算中**（`phase=settlement|complete`）：`SettlementWaiting`（草帽 bounce + 进度点 + `phase_settlement_desc` 文案）
 
 ### 10.1.1 底部固定猜测操作栏与 Modal
 
@@ -727,6 +758,63 @@ python manage.py seed_one_piece
 
 - 藏蓝 + 草帽黄（`ocean`, `straw`, `parchment`）
 - 浏览器标签图标：`frontend/public/favicon.png`（草帽海贼团标志）；`index.html` 标题「人物共性猜谜」
+- 全局背景微光斑动画（`index.css` `body::before`）；工具类 `animate-shake-x`、`animate-flash-red/green`、`animate-highlight-pulse`
+- `prefers-reduced-motion: reduce` 时禁用上述动画，保留 Toast 文字反馈
+
+### 10.5 游戏体验反馈（v12.3+）
+
+纯前端实现，**无需后端 API 变更**。各客户端根据 `MatchState` diff 本地触发，多人同步一致。
+
+#### 10.5.1 共享组件与 Hooks
+
+| 模块 | 路径 | 职责 |
+|---|---|---|
+| Toast | `components/Toast.tsx` | 右上堆叠通知（success/error/info/neutral），3s 自动消失 |
+| PhaseBanner | `components/PhaseBanner.tsx` | 游戏顶栏阶段与子状态 |
+| ConnectionBanner | `components/ConnectionBanner.tsx` | WS 重连/断开顶栏条 |
+| CharacterRevealOverlay | `components/CharacterRevealOverlay.tsx` | 全屏角色揭晓翻转动画 |
+| Spinner / Skeleton | `components/Spinner.tsx`, `Skeleton.tsx` | 加载指示与骨架屏 |
+| useGameSfx | `hooks/useGameSfx.ts` | 短音效；`public/sounds/*.wav`；失败时 Web Audio 合成 |
+| useHaptic | `hooks/useHaptic.ts` | `navigator.vibrate`（桌面静默降级） |
+| usePreferences | `hooks/usePreferences.ts` | `sfx_enabled`（**默认 false**）、`haptic_enabled`（默认 true） |
+| useMatchStateDiff | `hooks/useMatchStateDiff.ts` | 对比前后 `MatchState`，触发 Toast/音效/动画事件 |
+| useConfetti | `hooks/useConfetti.ts` | 猜对/合作成功/终局胜利 canvas 粒子 |
+| useReducedMotion | `hooks/useReducedMotion.ts` | 尊重系统「减少动效」 |
+
+`main.tsx` 根节点外包 `ToastProvider`。`Modal` 支持 `dismissible`（默认 `true`）。
+
+#### 10.5.2 角色揭晓（CharacterRevealOverlay）
+
+- **触发**：`self.character` 从空变为有值（猜对或放弃）；刷新页面若已揭晓则**跳过**动画
+- **表现**：全屏遮罩 `z-70`；卡牌 `?` → 旋转 900°（2.5 圈）→ 正面肖像 + 名字；放弃揭晓红色边框
+- **阻塞**：`showRevealOverlay === true` 时 `interactionBlocked`，禁止其他操作
+- **人物卡**：动画完成前 `CharacterCard` 仍显示 `???`；完成后 `selfRevealComplete` 才展示真名
+- **3D 实现**：双面 `backfaceVisibility` + 正面预 `rotateY(180deg)`，避免镜像；**不在** `CharacterCard` 内嵌翻转
+
+#### 10.5.3 评判与重选 Modal
+
+| 场景 | 条件 | Modal | 可关闭 |
+|---|---|---|---|
+| 评判他人猜测 | 他人 `verdict=pending` 且本人未投票 | 标题 `phase_judging`；展示猜测文本 + 猜对/猜错钮 | **否**（`dismissible=false`） |
+| 确认人物重选 | `character_reroll.status=pending` 且本人为 `confirmer_player_id` | 标题 `rerollRequest`；同意/拒绝 | **否** |
+
+- 评判：按队列处理（同一时间展示第一个待投票猜测）；投票后自动关闭并处理下一个
+- 重选：申请者在人物卡下仅显示「等待确认」文字；目标玩家显示「等待确认中」；**无**页面内重复按钮
+- 重选申请：非目标玩家的人物卡下仍保留「重选」Ghost 按钮（`interactionBlocked` 时 disabled）
+
+#### 10.5.4 其他流程反馈
+
+| 页面 | 反馈 |
+|---|---|
+| HomePage | Tab 滑入 + 下划线；对抗规则默认折叠；主 CTA spinner；`SfxToggle` |
+| LobbyPage | 入座 spring 动画；复制 Toast + 触觉；满员 Start 脉冲；点击开局「出海！」overlay 0.8s |
+| GameBoard | 新提示 Toast + 高亮；猜错 shake + 红闪；底栏「评审中」三点跳动；阶段切换音效 |
+| ResultsPoster | 胜负 confetti/shake；排名 stagger；再来一局圆点进度 +「重新出发！」overlay |
+| 全局 | 路由 fade 0.2s；WS 重连 Toast |
+
+#### 10.5.5 i18n 新增（v12.3+）
+
+`phase_settlement_desc`、`toast_hintSent`、`toast_newHint`、`toast_newGuess`、`toast_copied`、`toast_reconnecting`、`toast_reconnected`、`toast_disconnected`、`youVotedCorrect`、`youVotedIncorrect`、`settingSound`、`soundOn`、`soundOff`、`departureOverlay`、`replayDeparture`、`competitiveRules`
 
 ---
 
@@ -879,6 +967,9 @@ docker-compose up --build
 | 拖拽上传后自动弹出图库 | 上传成功调用了 `setGalleryCharacterId` | 已修：仅点击肖像打开弹窗 |
 | 放弃猜测人物不显示 | 仅 `correct` 返回 `self.character` | 已修 v12：skip 同样 reveal |
 | 误把猜测答案发到提示框 | 提示/猜测输入框同屏易混淆 | 已修 v12.1：发提示独立卡片；猜测走底部 Modal |
+| 评判/重选操作分散 | 页面内多处按钮 | 已修 v12.4：统一改 Modal，必答不可关闭 |
+| 揭晓卡牌左右镜像 | 卡片内嵌 3D 翻转 | 已修 v12.4：`CharacterRevealOverlay` 全屏双面翻转 |
+| 音效默认打扰 | 默认开启 | 已修 v12.4：`sfx_enabled` 默认 false |
 | 撤回提示后从列表消失 | 物理 `DELETE` 记录 | 已修 v12：软撤回 + 删除线 UI |
 | rating 页看不到自己的提示 | `hint_rating_groups` 排除 `is_own` | 已修 v12：单独「你发出的提示」卡片 |
 | 多条提示需滚动才能看全 | `max-h-48 overflow-y-auto` | 已修 v12：全量展开 |
@@ -953,6 +1044,14 @@ backend/apps/rooms/services/room_service.py
 backend/apps/rooms/views.py
 frontend/src/features/game/GameBoard.tsx
 frontend/src/features/results/ResultsPoster.tsx
+frontend/src/components/Toast.tsx
+frontend/src/components/PhaseBanner.tsx
+frontend/src/components/CharacterRevealOverlay.tsx
+frontend/src/components/ConnectionBanner.tsx
+frontend/src/hooks/useGameSfx.ts
+frontend/src/hooks/useMatchStateDiff.ts
+frontend/src/hooks/usePreferences.ts
+frontend/public/sounds/
 frontend/src/features/admin/AdminThemesPage.tsx
 frontend/src/features/admin/AdminThemeDetailPage.tsx
 frontend/src/api/client.ts
@@ -1013,3 +1112,5 @@ DEPLOY_RAILWAY.md
 | 游戏 UX v12 | skip reveal、软撤回、rating 自己提示、提示全量展示 | commit `b934b46`；`rooms.0010` migrate |
 | 游戏 UX v12.1 | 提示/猜测分离、底部按钮 + Modal、按钮终态样式 | commit `a1c946e` |
 | 游戏 UX v12.2 | 猜测历史卡片、fixed 底栏、放弃钮白字 | 见 §10.1.1–§10.1.2 |
+| 游戏 UX v12.3 | Toast/音效/触觉、PhaseBanner、全流程动效、Settlement UI | commit `4d21736`；见 §10.5 |
+| 游戏 UX v12.4 | 揭晓全屏动画、评判/重选 Modal、音效默认关 | 见 §10.5.2–§10.5.3 |

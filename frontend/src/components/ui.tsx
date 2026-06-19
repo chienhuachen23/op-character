@@ -96,38 +96,49 @@ export function Modal({
   title,
   children,
   className,
+  dismissible = true,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   className?: string;
+  dismissible?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !dismissible) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, dismissible]);
 
   return (
     <AnimatePresence>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <motion.button
-            type="button"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.2 }}
-            className="absolute inset-0 bg-black/60"
-            aria-label="Close"
-            onClick={onClose}
-          />
+          {dismissible ? (
+            <motion.button
+              type="button"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reducedMotion ? 0 : 0.2 }}
+              className="absolute inset-0 bg-black/60"
+              aria-label="Close"
+              onClick={onClose}
+            />
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60"
+            />
+          )}
           <motion.div
             role="dialog"
             aria-modal="true"
@@ -144,14 +155,16 @@ export function Modal({
             <h3 id="modal-title" className="font-bold text-lg text-straw mb-4 pr-8">
               {title}
             </h3>
-            <button
-              type="button"
-              className="absolute top-4 right-4 text-parchment/60 hover:text-parchment text-xl leading-none"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              ×
-            </button>
+            {dismissible && (
+              <button
+                type="button"
+                className="absolute top-4 right-4 text-parchment/60 hover:text-parchment text-xl leading-none"
+                onClick={onClose}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            )}
             {children}
           </motion.div>
         </div>

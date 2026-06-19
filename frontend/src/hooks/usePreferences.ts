@@ -16,7 +16,7 @@ function emit() {
 }
 
 export function getSfxEnabled(): boolean {
-  return readBool(SFX_KEY, true);
+  return readBool(SFX_KEY, false);
 }
 
 export function getHapticEnabled(): boolean {
@@ -41,7 +41,7 @@ function subscribe(cb: () => void) {
 }
 
 export function usePreferences() {
-  const sfxEnabled = useSyncExternalStore(subscribe, getSfxEnabled, () => true);
+  const sfxEnabled = useSyncExternalStore(subscribe, getSfxEnabled, () => false);
   const hapticEnabled = useSyncExternalStore(subscribe, getHapticEnabled, () => true);
 
   const toggleSfx = useCallback(() => setSfxEnabled(!getSfxEnabled()), []);
